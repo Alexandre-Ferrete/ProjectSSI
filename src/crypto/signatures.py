@@ -14,35 +14,63 @@ from typing import Tuple
 
 def sign(private_key_pem: bytes, message: bytes) -> bytes:
     """
-    TODO: Sign a message with RSA/ECC private key.
-    
-    Args:
-        private_key_pem: Private key in PEM format
-        message: Message to sign
-        
-    Returns:
-        Signature bytes
-    
-    Implementation:
-    - Use RSASSA-PSS or ECDSA
-    - SHA-256 as hash function
+    Sign a message with RSA/ECC/Ed25519 private key.
     """
-    pass
+    from cryptography.hazmat.primitives import serialization, hashes
+    from cryptography.hazmat.primitives.asymmetric import padding, ec, rsa, ed25519
+    key = serialization.load_pem_private_key(private_key_pem, password=None)
+    if isinstance(key, rsa.RSAPrivateKey):
+        signature = key.sign(
+            message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+    elif isinstance(key, ec.EllipticCurvePrivateKey):
+        signature = key.sign(
+            message,
+            ec.ECDSA(hashes.SHA256())
+        )
+    elif isinstance(key, ed25519.Ed25519PrivateKey):
+        signature = key.sign(message)
+    else:
+        raise ValueError("Unsupported key type for signing")
+    return signature
 
 
 def verify(public_key_pem: bytes, message: bytes, signature: bytes) -> bool:
     """
-    TODO: Verify a signature.
-    
-    Args:
-        public_key_pem: Public key in PEM format
-        message: Original message
-        signature: Signature to verify
-        
-    Returns:
-        True if signature is valid
+    Verify a signature with RSA/ECC/Ed25519 public key.
     """
-    pass
+    from cryptography.hazmat.primitives import serialization, hashes
+    from cryptography.hazmat.primitives.asymmetric import padding, ec, rsa, ed25519
+    from cryptography.exceptions import InvalidSignature
+    key = serialization.load_pem_public_key(public_key_pem)
+    try:
+        if isinstance(key, rsa.RSAPublicKey):
+            key.verify(
+                signature, message,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+        elif isinstance(key, ec.EllipticCurvePublicKey):
+            key.verify(
+                signature,
+                message,
+                ec.ECDSA(hashes.SHA256())
+            )
+        elif isinstance(key, ed25519.Ed25519PublicKey):
+            key.verify(signature, message)
+        else:
+            return False
+    except InvalidSignature:
+        return False
+    return True
 
 
 def sign_certificate(
@@ -50,16 +78,11 @@ def sign_certificate(
     certificate_data: bytes
 ) -> bytes:
     """
-    TODO: Sign a certificate.
-    
-    Args:
-        private_key_pem: CA private key
-        certificate_data: Certificate to sign (TBSCertificate)
-        
-    Returns:
-        Signed certificate
+    Sign a certificate payload with CA private key.
     """
-    pass
+    # In X.509, typically the certificate is signed using the signing algorithm.
+    # Here, just sign the certificate_data like a blob
+    return sign(private_key_pem, certificate_data)
 
 
 def create_signature_payload(
@@ -70,19 +93,20 @@ def create_signature_payload(
     timestamp: int
 ) -> bytes:
     """
-    TODO: Create signature payload for chat message.
-    
-    Args:
-        sender: Sender's username
-        recipient: Recipient's username
-        message_id: Unique message ID
-        encrypted_content: The encrypted message
-        timestamp: Unix timestamp
-        
-    Returns:
-        Serialized payload to sign
+    Create signature payload for chat message (canonical serialization).
     """
-    pass
+    # Use a deterministic structure; fields (sender, recipient, message_id, encrypted_content, timestamp)
+    # Format: sender<sep>recipient<sep>id<sep>base64(content)<sep>timestamp
+    import base64
+    sep = b'|'
+    payload = (
+        sender.encode('utf-8') + sep +
+        recipient.encode('utf-8') + sep +
+        message_id.encode('utf-8') + sep +
+        base64.b64encode(encrypted_content) + sep +
+        str(timestamp).encode('utf-8')
+    )
+    return payload
 
 
 # ============================================================================

@@ -21,25 +21,36 @@ def generate_ca_certificate(
     validity_days: int = 3650
 ) -> bytes:
     """
-    TODO: Generate self-signed CA certificate.
-    
-    Args:
-        ca_private_key: CA private key
-        ca_public_key: CA public key
-        common_name: Certificate subject name
-        validity_days: Validity period in days
-        
-    Returns:
-        Certificate in PEM format
-    
-    Implementation:
-    - Use cryptography.x509
-    - Set subject: CN=common_name
-    - Set issuer: CN=common_name (self-signed)
-    - Add extensions: Basic Constraints, Key Usage
-    - Sign with CA private key
+    Generate a self-signed CA certificate.
     """
-    pass
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization, hashes
+    import datetime as dt
+    private_key = serialization.load_pem_private_key(ca_private_key, password=None)
+    public_key = serialization.load_pem_public_key(ca_public_key)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(x509.NameOID.COMMON_NAME, common_name)
+    ])
+    cert_builder = x509.CertificateBuilder()
+    cert_builder = cert_builder.subject_name(subject)
+    cert_builder = cert_builder.issuer_name(issuer)
+    cert_builder = cert_builder.public_key(public_key)
+    cert_builder = cert_builder.serial_number(x509.random_serial_number())
+    cert_builder = cert_builder.not_valid_before(dt.datetime.utcnow())
+    cert_builder = cert_builder.not_valid_after(dt.datetime.utcnow() + dt.timedelta(days=validity_days))
+    cert_builder = cert_builder.add_extension(
+        x509.BasicConstraints(ca=True, path_length=None), critical=True
+    )
+    cert_builder = cert_builder.add_extension(
+        x509.KeyUsage(
+            digital_signature=True, key_encipherment=True,
+            key_cert_sign=True, crl_sign=True, content_commitment=False,
+            data_encipherment=False, key_agreement=False, encipher_only=False, decipher_only=False
+        ), critical=True
+    )
+    cert = cert_builder.sign(private_key, hashes.SHA256())
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM)
+    return cert_pem
 
 
 def generate_user_certificate(
@@ -50,65 +61,70 @@ def generate_user_certificate(
     validity_days: int = 365
 ) -> bytes:
     """
-    TODO: Generate user certificate signed by CA.
-    
-    Args:
-        ca_private_key: CA private key for signing
-        user_public_key: User's public key to embed
-        username: User's identity (CN)
-        ca_cert: CA certificate
-        validity_days: Validity period
-        
-    Returns:
-        Certificate in PEM format
-    
-    Implementation:
-    - Set subject: CN=username
-    - Set issuer: CN=ChatServer CA (from CA cert)
-    - Add user public key
-    - Add extensions
-    - Sign with CA private key
+    Generate a user certificate signed by CA.
     """
-    pass
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization, hashes
+    import datetime as dt
+    ca_key = serialization.load_pem_private_key(ca_private_key, password=None)
+    user_pubkey = serialization.load_pem_public_key(user_public_key)
+    ca_cert_obj = x509.load_pem_x509_certificate(ca_cert)
+    subject = x509.Name([
+        x509.NameAttribute(x509.NameOID.COMMON_NAME, username)
+    ])
+    issuer = ca_cert_obj.subject
+    cert_builder = x509.CertificateBuilder()
+    cert_builder = cert_builder.subject_name(subject)
+    cert_builder = cert_builder.issuer_name(issuer)
+    cert_builder = cert_builder.public_key(user_pubkey)
+    cert_builder = cert_builder.serial_number(x509.random_serial_number())
+    cert_builder = cert_builder.not_valid_before(dt.datetime.utcnow())
+    cert_builder = cert_builder.not_valid_after(dt.datetime.utcnow() + dt.timedelta(days=validity_days))
+    cert_builder = cert_builder.add_extension(
+        x509.BasicConstraints(ca=False, path_length=None), critical=True
+    )
+    cert_builder = cert_builder.add_extension(
+        x509.KeyUsage(
+            digital_signature=True, key_encipherment=True,
+            key_cert_sign=False, crl_sign=False, content_commitment=False,
+            data_encipherment=False, key_agreement=False, encipher_only=False, decipher_only=False
+        ), critical=True
+    )
+    cert_builder = cert_builder.add_extension(
+        x509.SubjectAlternativeName([x509.DNSName(username)]), critical=False
+    )
+    cert = cert_builder.sign(ca_key, hashes.SHA256())
+    return cert.public_bytes(serialization.Encoding.PEM)
 
 
 def load_certificate(cert_pem: bytes):
     """
-    TODO: Load certificate from PEM.
-    
-    Args:
-        cert_pem: Certificate in PEM format
-        
-    Returns:
-        Certificate object
+    Load certificate from PEM bytes to x509 object.
     """
-    pass
+    from cryptography import x509
+    return x509.load_pem_x509_certificate(cert_pem)
 
 
 def get_subject(cert) -> str:
     """
-    TODO: Get subject common name from certificate.
-    
-    Args:
-        cert: Certificate object
-        
-    Returns:
-        Common name (username)
+    Get subject common name from certificate object.
     """
-    pass
+    from cryptography.x509.oid import NameOID
+    for attr in cert.subject:
+        if attr.oid == NameOID.COMMON_NAME:
+            return attr.value
+    return ""
 
 
 def get_public_key(cert) -> bytes:
     """
-    TODO: Extract public key from certificate.
-    
-    Args:
-        cert: Certificate object
-        
-    Returns:
-        Public key in PEM format
+    Extract public key from certificate, return as PEM bytes.
     """
-    pass
+    from cryptography.hazmat.primitives import serialization
+    return cert.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
 
 
 def verify_signature(
@@ -116,26 +132,36 @@ def verify_signature(
     signing_cert: bytes
 ) -> bool:
     """
-    TODO: Verify certificate was signed by CA.
-    
-    Args:
-        cert: Certificate to verify
-        signing_cert: CA certificate
-        
-    Returns:
-        True if valid signature
+    Verify certificate was signed by CA.
     """
-    pass
+    from cryptography import x509
+    from cryptography.exceptions import InvalidSignature
+    user_cert = x509.load_pem_x509_certificate(cert)
+    ca_cert = x509.load_pem_x509_certificate(signing_cert)
+    ca_pubkey = ca_cert.public_key()
+    try:
+        ca_pubkey.verify(
+            user_cert.signature,
+            user_cert.tbs_certificate_bytes,
+            user_cert.signature_hash_algorithm
+        )
+        return True
+    except InvalidSignature:
+        return False
+    except Exception:
+        return False
 
 
 def is_expired(cert) -> bool:
-    """TODO: Check if certificate is expired."""
-    pass
+    """Check if certificate is expired."""
+    from datetime import datetime
+    now = datetime.utcnow()
+    return now < cert.not_valid_before or now > cert.not_valid_after
 
 
 def get_validity_period(cert) -> Tuple[datetime, datetime]:
-    """TODO: Get certificate validity period."""
-    pass
+    """Get certificate validity period (notBefore, notAfter)."""
+    return cert.not_valid_before, cert.not_valid_after
 
 
 # ============================================================================

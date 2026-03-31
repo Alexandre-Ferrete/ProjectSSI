@@ -14,62 +14,72 @@ from typing import Tuple
 
 def generate_keypair(key_size: int = 2048) -> Tuple[bytes, bytes]:
     """
-    TODO: Generate RSA keypair.
-    
-    Args:
-        key_size: Size of key in bits (2048, 4096)
-        
-    Returns:
-        (private_key_pem, public_key_pem)
-    
-    Implementation:
-    - Use cryptography.hazmat.primitives.asymmetric.rsa
-    - Generate private key with public exponent 65537
-    - Serialize to PEM format
+    Generate RSA keypair.
     """
-    pass
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=key_size,
+    )
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return private_pem, public_pem
 
 
 def encrypt(public_key_pem: bytes, data: bytes) -> bytes:
     """
-    TODO: Encrypt data with RSA public key.
-    
-    Args:
-        public_key_pem: RSA public key in PEM format
-        data: Data to encrypt (typically a symmetric key)
-        
-    Returns:
-        Encrypted data
-    
-    Implementation:
-    - Use OAEP padding with SHA256
-    - Maximum data size depends on key size
+    Encrypt data with RSA public key (using OAEP SHA256).
     """
-    pass
+    key = load_public_key(public_key_pem)
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives import hashes
+    ciphertext = key.encrypt(
+        data,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return ciphertext
 
 
 def decrypt(private_key_pem: bytes, encrypted_data: bytes) -> bytes:
     """
-    TODO: Decrypt data with RSA private key.
-    
-    Args:
-        private_key_pem: RSA private key in PEM format
-        encrypted_data: Data encrypted with public key
-        
-    Returns:
-        Decrypted data
+    Decrypt data using RSA private key (OAEP SHA256).
     """
-    pass
+    key = load_private_key(private_key_pem)
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives import hashes
+    plaintext = key.decrypt(
+        encrypted_data,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return plaintext
 
 
 def load_public_key(public_key_pem: bytes):
-    """TODO: Load public key from PEM."""
-    pass
+    """Load public key from PEM."""
+    from cryptography.hazmat.primitives import serialization
+    return serialization.load_pem_public_key(public_key_pem)
 
 
 def load_private_key(private_key_pem: bytes):
-    """TODO: Load private key from PEM."""
-    pass
+    """Load private key from PEM."""
+    from cryptography.hazmat.primitives import serialization
+    return serialization.load_pem_private_key(private_key_pem, password=None)
 
 
 # ============================================================================

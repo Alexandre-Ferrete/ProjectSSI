@@ -18,7 +18,13 @@ def encrypt(
     ephemeral_key: bytes = None
 ) -> Tuple[bytes, bytes, bytes, bytes]:
     """
-    TODO: Encrypt data using hybrid encryption.
+    Encrypt data using RSA hybrid encryption.
+    """
+    from . import symmetric, asymmetric
+    key = symmetric.generate_key()
+    ciphertext, nonce, tag = symmetric.encrypt(key, plaintext)
+    encrypted_key = asymmetric.encrypt(recipient_public_key, key)
+    return encrypted_key, nonce, tag, ciphertext
     
     Process:
     1. Generate random symmetric key (session key)
@@ -50,7 +56,12 @@ def decrypt(
     ciphertext: bytes
 ) -> bytes:
     """
-    TODO: Decrypt data using hybrid encryption.
+    Decrypt data using RSA hybrid encryption.
+    """
+    from . import symmetric, asymmetric
+    key = asymmetric.decrypt(private_key, encrypted_key)
+    plaintext = symmetric.decrypt(key, ciphertext, nonce, tag)
+    return plaintext
     
     Process:
     1. Decrypt symmetric key with private key
@@ -75,7 +86,18 @@ def encrypt_ecdh(
     plaintext: bytes
 ) -> Tuple[bytes, bytes, bytes, bytes]:
     """
-    TODO: Encrypt using ECDH key exchange (for PFS).
+    Encrypt using ECDH key exchange (PFS).
+    """
+    from . import ecdh, symmetric
+    # 1. Ephemeral keypair
+    ephemeral_priv, ephemeral_pub = ecdh.generate_keypair()
+    # 2. Shared secret (ECDH)
+    shared_secret = ecdh.perform_exchange(ephemeral_priv, recipient_public_key)
+    # 3. Derive session key
+    session_key = ecdh.derive_key(shared_secret)
+    # 4. Encrypt data
+    ciphertext, nonce, tag = symmetric.encrypt(session_key, plaintext)
+    return ephemeral_pub, nonce, tag, ciphertext
     
     Process:
     1. Generate ephemeral ECDH keypair
@@ -102,7 +124,13 @@ def decrypt_ecdh(
     ciphertext: bytes
 ) -> bytes:
     """
-    TODO: Decrypt using ECDH key exchange.
+    Decrypt using ECDH key exchange.
+    """
+    from . import ecdh, symmetric
+    shared_secret = ecdh.perform_exchange(private_key, ephemeral_public_key)
+    session_key = ecdh.derive_key(shared_secret)
+    plaintext = symmetric.decrypt(session_key, ciphertext, nonce, tag)
+    return plaintext
     
     Process:
     1. Perform ECDH with our private key + ephemeral public key
