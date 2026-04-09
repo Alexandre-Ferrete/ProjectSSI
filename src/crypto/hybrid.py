@@ -2,11 +2,6 @@
 Hybrid Encryption
 =================
 Combines asymmetric and symmetric encryption for efficient data encryption.
-
-TODO:
-- Encrypt data using hybrid scheme
-- Decrypt data using hybrid scheme
-- Handle key encapsulation + data encryption
 """
 
 from typing import Tuple
@@ -19,13 +14,7 @@ def encrypt(
 ) -> Tuple[bytes, bytes, bytes, bytes]:
     """
     Encrypt data using RSA hybrid encryption.
-    """
-    from . import symmetric, asymmetric
-    key = symmetric.generate_key()
-    ciphertext, nonce, tag = symmetric.encrypt(key, plaintext)
-    encrypted_key = asymmetric.encrypt(recipient_public_key, key)
-    return encrypted_key, nonce, tag, ciphertext
-    
+
     Process:
     1. Generate random symmetric key (session key)
     2. Encrypt plaintext with symmetric key (AES-GCM)
@@ -39,13 +28,12 @@ def encrypt(
         
     Returns:
         (encrypted_key, nonce, tag, ciphertext)
-        
-    Implementation:
-    - Generate AES key: symmetric.generate_key()
-    - Encrypt data: symmetric.encrypt(key, plaintext)
-    - Encrypt key: asymmetric.encrypt(public_key, key)
     """
-    pass
+    from . import symmetric, asymmetric
+    key = symmetric.generate_key()
+    ciphertext, nonce, tag = symmetric.encrypt(key, plaintext)
+    encrypted_key = asymmetric.encrypt(recipient_public_key, key)
+    return encrypted_key, nonce, tag, ciphertext
 
 
 def decrypt(
@@ -57,12 +45,7 @@ def decrypt(
 ) -> bytes:
     """
     Decrypt data using RSA hybrid encryption.
-    """
-    from . import symmetric, asymmetric
-    key = asymmetric.decrypt(private_key, encrypted_key)
-    plaintext = symmetric.decrypt(key, ciphertext, nonce, tag)
-    return plaintext
-    
+
     Process:
     1. Decrypt symmetric key with private key
     2. Decrypt ciphertext with symmetric key
@@ -78,7 +61,10 @@ def decrypt(
     Returns:
         Decrypted plaintext
     """
-    pass
+    from . import symmetric, asymmetric
+    key = asymmetric.decrypt(private_key, encrypted_key)
+    plaintext = symmetric.decrypt(key, ciphertext, nonce, tag)
+    return plaintext
 
 
 def encrypt_ecdh(
@@ -87,18 +73,7 @@ def encrypt_ecdh(
 ) -> Tuple[bytes, bytes, bytes, bytes]:
     """
     Encrypt using ECDH key exchange (PFS).
-    """
-    from . import ecdh, symmetric
-    # 1. Ephemeral keypair
-    ephemeral_priv, ephemeral_pub = ecdh.generate_keypair()
-    # 2. Shared secret (ECDH)
-    shared_secret = ecdh.perform_exchange(ephemeral_priv, recipient_public_key)
-    # 3. Derive session key
-    session_key = ecdh.derive_key(shared_secret)
-    # 4. Encrypt data
-    ciphertext, nonce, tag = symmetric.encrypt(session_key, plaintext)
-    return ephemeral_pub, nonce, tag, ciphertext
-    
+
     Process:
     1. Generate ephemeral ECDH keypair
     2. Perform ECDH with recipient's key
@@ -113,7 +88,12 @@ def encrypt_ecdh(
     Returns:
         (ephemeral_public_key, nonce, tag, ciphertext)
     """
-    pass
+    from . import ecdh, symmetric
+    ephemeral_priv, ephemeral_pub = ecdh.generate_keypair()
+    shared_secret = ecdh.perform_exchange(ephemeral_priv, recipient_public_key)
+    session_key = ecdh.derive_key(shared_secret)
+    ciphertext, nonce, tag = symmetric.encrypt(session_key, plaintext)
+    return ephemeral_pub, nonce, tag, ciphertext
 
 
 def decrypt_ecdh(
@@ -125,13 +105,7 @@ def decrypt_ecdh(
 ) -> bytes:
     """
     Decrypt using ECDH key exchange.
-    """
-    from . import ecdh, symmetric
-    shared_secret = ecdh.perform_exchange(private_key, ephemeral_public_key)
-    session_key = ecdh.derive_key(shared_secret)
-    plaintext = symmetric.decrypt(session_key, ciphertext, nonce, tag)
-    return plaintext
-    
+
     Process:
     1. Perform ECDH with our private key + ephemeral public key
     2. Derive same session key using HKDF
@@ -147,7 +121,11 @@ def decrypt_ecdh(
     Returns:
         Decrypted plaintext
     """
-    pass
+    from . import ecdh, symmetric
+    shared_secret = ecdh.perform_exchange(private_key, ephemeral_public_key)
+    session_key = ecdh.derive_key(shared_secret)
+    plaintext = symmetric.decrypt(session_key, ciphertext, nonce, tag)
+    return plaintext
 
 
 # ============================================================================

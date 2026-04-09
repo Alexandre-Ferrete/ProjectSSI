@@ -12,6 +12,8 @@ TODO:
 
 from datetime import datetime
 from typing import Tuple, Optional
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization, hashes
 
 
 def generate_ca_certificate(
@@ -23,7 +25,6 @@ def generate_ca_certificate(
     """
     Generate a self-signed CA certificate.
     """
-    from cryptography import x509
     from cryptography.hazmat.primitives import serialization, hashes
     import datetime as dt
     private_key = serialization.load_pem_private_key(ca_private_key, password=None)
@@ -136,15 +137,27 @@ def verify_signature(
     """
     from cryptography import x509
     from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric import padding, ec, rsa
     user_cert = x509.load_pem_x509_certificate(cert)
     ca_cert = x509.load_pem_x509_certificate(signing_cert)
     ca_pubkey = ca_cert.public_key()
+    
     try:
-        ca_pubkey.verify(
-            user_cert.signature,
-            user_cert.tbs_certificate_bytes,
-            user_cert.signature_hash_algorithm
-        )
+        if isinstance(ca_pubkey, rsa.RSAPublicKey):
+            ca_pubkey.verify(
+                user_cert.signature,
+                user_cert.tbs_certificate_bytes,
+                padding.PKCS1v15(),
+                user_cert.signature_hash_algorithm
+            )
+        elif isinstance(ca_pubkey, ec.EllipticCurvePublicKey):
+            ca_pubkey.verify(
+                user_cert.signature,
+                user_cert.tbs_certificate_bytes,
+                ec.ECDSA(user_cert.signature_hash_algorithm)
+            )
+        else:
+            return False
         return True
     except InvalidSignature:
         return False

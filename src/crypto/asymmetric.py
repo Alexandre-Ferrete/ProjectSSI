@@ -10,14 +10,14 @@ TODO:
 """
 
 from typing import Tuple
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization, hashes
 
 
 def generate_keypair(key_size: int = 2048) -> Tuple[bytes, bytes]:
     """
     Generate RSA keypair.
     """
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives import serialization
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=key_size,
@@ -39,8 +39,6 @@ def encrypt(public_key_pem: bytes, data: bytes) -> bytes:
     Encrypt data with RSA public key (using OAEP SHA256).
     """
     key = load_public_key(public_key_pem)
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.primitives import hashes
     ciphertext = key.encrypt(
         data,
         padding.OAEP(
@@ -57,8 +55,6 @@ def decrypt(private_key_pem: bytes, encrypted_data: bytes) -> bytes:
     Decrypt data using RSA private key (OAEP SHA256).
     """
     key = load_private_key(private_key_pem)
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.primitives import hashes
     plaintext = key.decrypt(
         encrypted_data,
         padding.OAEP(
@@ -72,13 +68,11 @@ def decrypt(private_key_pem: bytes, encrypted_data: bytes) -> bytes:
 
 def load_public_key(public_key_pem: bytes):
     """Load public key from PEM."""
-    from cryptography.hazmat.primitives import serialization
     return serialization.load_pem_public_key(public_key_pem)
 
 
 def load_private_key(private_key_pem: bytes):
     """Load private key from PEM."""
-    from cryptography.hazmat.primitives import serialization
     return serialization.load_pem_private_key(private_key_pem, password=None)
 
 
