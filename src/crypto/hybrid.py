@@ -33,6 +33,7 @@ def encrypt(
     key = symmetric.generate_key()
     ciphertext, nonce, tag = symmetric.encrypt(key, plaintext)
     encrypted_key = asymmetric.encrypt(recipient_public_key, key)
+    
     return encrypted_key, nonce, tag, ciphertext
 
 

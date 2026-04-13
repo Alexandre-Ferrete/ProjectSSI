@@ -49,16 +49,74 @@ def decode_base64(data: str) -> bytes:
     """
     return base64.b64decode(data.encode('utf-8'))
 
-def encode_hex(data: bytes) -> str:
-    """TODO: Encode bytes to hex string."""
+
+def hash_sha256(data: bytes) -> bytes:
+    """
+    SHA-256 hash of data.
+    
+    Args:
+        data: Data to hash
+    Returns:
+        Hash digest (32 bytes)
+    """
+    return hashlib.sha256(data).digest()
+
+
+def hash_sha256_hex(data: bytes) -> str:
+    """
+    SHA-256 hash as hex string.
+    
+    Args:
+        data: Data to hash
+    Returns:
+        Hash hex string (64 characters)
+    """
+    return hashlib.sha256(data).hexdigest()
+
+
+def secure_random_bytes(length: int) -> bytes:
+    """
+    Generate cryptographically secure random bytes.
+    
+    Args:
+        length: Number of random bytes
+    Returns:
+        Random bytes
+    """
+    return os.urandom(length)
+
+def bytes_to_hex(data: bytes) -> str:
+    """
+    Convert bytes to hexadecimal string.
+    
+    Args:
+        data: Bytes to convert
+    Returns:
+        Hexadecimal string
+    """
     return data.hex()
 
 
+def hex_to_bytes(hex_str: str) -> bytes:
+    """
+    Convert hexadecimal string to bytes.
+    
+    Args:
+        hex_str: Hex string
+    Returns:
+        Bytes
+    """
+    return bytes.fromhex(hex_str)
+
+
+def encode_hex(data: bytes) -> str:
+    """Alias for bytes_to_hex."""
+    return bytes_to_hex(data)
+
+
 def decode_hex(data: str) -> bytes:
-    """
-    Decode hex string to bytes.
-    """
-    return bytes.fromhex(data)
+    """Alias for hex_to_bytes."""
+    return hex_to_bytes(data)
 
 
 # =========================================================================
@@ -272,6 +330,31 @@ def write_file(path: str, data: bytes):
         data: Data to write (bytes)
     """
     with open(path, 'wb') as f:
+        f.write(data)
+
+
+def load_pem(file_path: str) -> bytes:
+    """
+    Load PEM-encoded file.
+    
+    Args:
+        file_path: Path to PEM file
+    Returns:
+        PEM contents as bytes
+    """
+    with open(file_path, 'rb') as f:
+        return f.read()
+
+
+def save_pem(data: bytes, file_path: str) -> None:
+    """
+    Save PEM-encoded data to file.
+    
+    Args:
+        data: PEM data bytes
+        file_path: Path to save file
+    """
+    with open(file_path, 'wb') as f:
         f.write(data)
 
 
