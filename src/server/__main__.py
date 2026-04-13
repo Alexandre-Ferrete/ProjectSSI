@@ -1,6 +1,6 @@
 """
 Server Entry Point
-==================
+=================
 Run as: python -m server
 """
 
