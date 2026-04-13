@@ -20,7 +20,8 @@ Sistema **cliente-servidor**, onde o servidor é um ponto central de coordenaç�
 ### Servidor
 - Funciona continuamente, aguardando conexões de clientes
 - Responsável pela gestão de utilizadores
-- Encaminhamento de mensagens entre clientes
+- Mantém um diretório de **User -> IP** para permitir comunicação P2P
+- **Não encamina mensagens** - apenas fornece IPs aos clientes
 - Armazenamento de metadados (ex: listas de contactos)
 - Persistência de dados com o mesmo rigor de segurança aplicado às mensagens
 
@@ -28,16 +29,23 @@ Sistema **cliente-servidor**, onde o servidor é um ponto central de coordenaç�
 - Cada utilizador usa uma instância própria da aplicação
 - Após conexão segura ao servidor, funciona como um **interpretador de comandos textuais**
 - Permite envio/receção de mensagens e gestão de contactos
+- Quando deseja enviar mensagem, pede o IP do destinatário ao servidor e conecta-se diretamente (P2P)
 - Comandos específicos ficam ao critério dos alunos
 
 ### Identidade
 - Cada utilizador possui um **identificador único**
 - Suporte a múltiplas sessões simultâneas para o mesmo utilizador fica ao critério dos alunos
 
-### Comunicação
+### Comunicação P2P
 - Recomendada utilização de **sockets TCP**
 - Projeto pode ser executado apenas em `localhost`
 - Arquitetura deve prever **separação lógica** entre cliente e servidor
+- **Fluxo de mensagens:**
+  1. Utilizador A faz login → servidor regista IP de A
+  2. A quer enviar mensagem a B → pede IP de B ao servidor
+  3. Servidor retorna IP de B
+  4. A conecta-se diretamente a B (P2P)
+  5. A e B comunicam sem passar pelo servidor
 
 ---
 

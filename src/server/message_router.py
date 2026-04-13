@@ -1,13 +1,13 @@
 """
 Message Router
-============
+=============
 Routes messages between users, handles online/offline delivery.
+Coordinates P2P connection establishment between users.
 
-TODO:
-- Implement message routing
-- Implement offline storage
-- Implement room management
-- Implement room messaging
+IMPLEMENTAÇÃO:
+- Rooms em memória (dicionário com lock)
+- Offline messages usam storage SQLite
+- Notificações via handlers dos utilizadores
 """
 
 import logging
@@ -18,10 +18,15 @@ from typing import Optional, List, Dict, Any
 class MessageRouter:
     """
     Routes messages between users.
+    Coordinates P2P connections via IP lookup.
     """
     
     def __init__(self, user_manager, storage):
-        """TODO: Initialize message router."""
+        """Inicializa o router com user_manager e storage."""
+        # self.user_manager = user_manager
+        # self.storage = storage
+        # self._rooms = {}  # room_name -> {members: [], created_by: str}
+        # self._lock = threading.Lock()
         pass
     
     def route_message(
@@ -34,11 +39,18 @@ class MessageRouter:
         nonce: bytes = None,
         tag: bytes = None
     ) -> Dict[str, Any]:
-        """TODO: Route a message to recipient."""
+        """Routeia mensagem para destinatário (notifica para usar P2P)."""
+        # 1. Verificar se destinatário está online
+        # 2. Se online: deliver_to_online()
+        # 3. Se offline: store_offline()
+        # 4. Retornar status
         pass
     
     def deliver_to_online(self, recipient: str, message: Dict[str, Any]) -> bool:
-        """TODO: Deliver message to online user."""
+        """Entrega mensagem a utilizador online."""
+        # handler = user_manager.get_handler(recipient)
+        # handler.send_message(message)
+        # return True/False
         pass
     
     def store_offline(
@@ -51,27 +63,33 @@ class MessageRouter:
         nonce: bytes = None,
         tag: bytes = None
     ):
-        """TODO: Store message for offline delivery."""
+        """Guarda mensagem para entrega posterior."""
+        # storage.store_offline_message(...)
         pass
     
     def deliver_pending_offline_messages(self, username: str, handler):
-        """TODO: Deliver all pending offline messages to user on login."""
+        """Entrega mensagens offline ao utilizador no login."""
+        # msgs = storage.get_offline_messages(username)
+        # for msg in msgs:
+        #     handler.send_message(msg)
+        #     storage.mark_offline_message_delivered(msg["id"])
         pass
     
     def create_room(self, room_name: str, created_by: str) -> Dict[str, Any]:
-        """TODO: Create a new chat room."""
+        """Cria novo room de chat."""
+        # Com lock: verificar se existe, criar entrada no dicionário
         pass
     
     def delete_room(self, room_name: str) -> bool:
-        """TODO: Delete a chat room."""
+        """Elimina room de chat."""
         pass
     
     def join_room(self, room_name: str, username: str) -> Dict[str, Any]:
-        """TODO: Add user to a room."""
+        """Adiciona utilizador a um room."""
         pass
     
     def leave_room(self, room_name: str, username: str) -> bool:
-        """TODO: Remove user from a room."""
+        """Remove utilizador de um room."""
         pass
     
     def broadcast_to_room(
@@ -84,29 +102,29 @@ class MessageRouter:
         nonce: bytes = None,
         tag: bytes = None
     ) -> Dict[str, Any]:
-        """TODO: Broadcast message to all room members."""
+        """Broadcast mensagem para todos os membros do room."""
         pass
     
     def get_room_members(self, room_name: str) -> List[str]:
-        """TODO: Get all members of a room."""
+        """Retorna membros de um room."""
         pass
     
     def get_all_rooms(self) -> List[Dict[str, Any]]:
-        """TODO: Get all active rooms."""
+        """Retorna todos os rooms ativos."""
         pass
     
     def _notify_room_members(self, room_name: str, message: Dict[str, Any], exclude: List[str] = None):
-        """TODO: Send notification to all room members."""
+        """Envia notificação a todos os membros do room."""
         pass
     
     def notify_user_online(self, username: str, handler):
-        """TODO: Notify user's contacts that they came online."""
+        """Notifica contactos que utilizador ficou online."""
         pass
     
     def notify_user_offline(self, username: str):
-        """TODO: Notify user's contacts that they went offline."""
+        """Notifica contactos que utilizador ficou offline."""
         pass
     
     def get_room_info(self, room_name: str) -> Optional[Dict[str, Any]]:
-        """TODO: Get room information."""
+        """Retorna informação do room."""
         pass

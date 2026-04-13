@@ -8,16 +8,17 @@ TODO:
 - Verify signatures
 - Sign certificates
 """
-
+import base64
 from typing import Tuple
-
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding, ec, rsa, ed25519
+from cryptography.exceptions import InvalidSignature
 
 def sign(private_key_pem: bytes, message: bytes) -> bytes:
     """
     Sign a message with RSA/ECC/Ed25519 private key.
     """
-    from cryptography.hazmat.primitives import serialization, hashes
-    from cryptography.hazmat.primitives.asymmetric import padding, ec, rsa, ed25519
+
     key = serialization.load_pem_private_key(private_key_pem, password=None)
     if isinstance(key, rsa.RSAPrivateKey):
         signature = key.sign(
@@ -44,9 +45,6 @@ def verify(public_key_pem: bytes, message: bytes, signature: bytes) -> bool:
     """
     Verify a signature with RSA/ECC/Ed25519 public key.
     """
-    from cryptography.hazmat.primitives import serialization, hashes
-    from cryptography.hazmat.primitives.asymmetric import padding, ec, rsa, ed25519
-    from cryptography.exceptions import InvalidSignature
     key = serialization.load_pem_public_key(public_key_pem)
     try:
         if isinstance(key, rsa.RSAPublicKey):
@@ -97,7 +95,6 @@ def create_signature_payload(
     """
     # Use a deterministic structure; fields (sender, recipient, message_id, encrypted_content, timestamp)
     # Format: sender<sep>recipient<sep>id<sep>base64(content)<sep>timestamp
-    import base64
     sep = b'|'
     payload = (
         sender.encode('utf-8') + sep +

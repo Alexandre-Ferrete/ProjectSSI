@@ -10,7 +10,10 @@
 
 ### 1.1 System Overview
 
-This is a secure End-to-End Encrypted (E2EE) chat system implemented in Python using the `cryptography` library. The system follows a client-server architecture using TCP sockets for communication.
+This is a secure End-to-End Encrypted (E2EE) chat system implemented in Python using the `cryptography` library. The system follows a **hybrid client-server/P2P architecture**:
+
+- **Server**: Acts as a directory service, managing user registration and providing IP addresses for P2P connections
+- **Clients**: Connect directly to each other for messaging (P2P), with E2EE encryption
 
 ### 1.2 Components
 
@@ -18,22 +21,34 @@ This is a secure End-to-End Encrypted (E2EE) chat system implemented in Python u
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Server                                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
-│  │ User Mgmt   │  │   PKI/CA    │  │ Message Routing         │ │
-│  │ - Register  │  │ - Certs     │  │ - Direct Messages       │ │
-│  │ - Login     │  │ - Validation│  │ - Group Messages        │ │
-│  │ - Online    │  │ - Revocation│  │ - Offline Storage       │ │
+│  │ User Mgmt   │  │   PKI/CA    │  │  IP Directory          │ │
+│  │ - Register  │  │ - Certs     │  │  - User -> IP mapping │ │
+│  │ - Login     │  │ - Validation│  │  - Online status      │ │
+│  │ - Online    │  │ - Revocation│  │  - P2P coordination    │ │
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                    TCP Socket Communication
-                              │
+                    │                │
+          IP Lookup │                │ Direct P2P
+                    ▼                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Client                                  │
+│                         Client A                                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
-│  │  CLI UI     │  │  Crypto     │  │ Session Management      │ │
-│  │ - Commands  │  │ - E2EE      │  │ - Key Exchange          │ │
-│  │ - Input     │  │ - ECDH      │  │ - Group Keys            │ │
-│  │ - Display   │  │ - AES-GCM   │  │ - Certificate Cache     │ │
+│  │  CLI UI     │  │  Crypto     │  │ P2P Connection        │ │
+│  │ - Commands  │  │ - E2EE      │  │ - Direct to Peer       │ │
+│  │ - Input     │  │ - ECDH      │  │ - Listen on port       │ │
+│  │ - Display   │  │ - AES-GCM   │  │ - Message handling     │ │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                         P2P TCP
+                               │
+┌─────────────────────────────────────────────────────────────────┐
+│                         Client B                                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+│  │  CLI UI     │  │  Crypto     │  │ P2P Connection        │ │
+│  │ - Commands  │  │ - E2EE      │  │ - Direct to Peer       │ │
+│  │ - Input     │  │ - ECDH      │  │ - Listen on port       │ │
+│  │ - Display   │  │ - AES-GCM   │  │ - Message handling     │ │
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -48,18 +63,19 @@ This is a secure End-to-End Encrypted (E2EE) chat system implemented in Python u
 5. Client sends registration request with public key and certificate
 6. Server validates certificate and stores user
 
-#### Key Exchange (Perfect Forward Secrecy)
+#### P2P Connection Setup
 1. Client A wants to message Client B
-2. Client A requests B's certificate from server
-3. Client A generates ephemeral EC keypair
-4. Client A performs ECDH with B's public key
-5. Derived shared secret is used for AES-GCM encryption
+2. Client A requests B's IP from server (via GET_IP command)
+3. Server returns B's IP address if B is online
+4. Client A connects directly to Client B via P2P TCP socket
+5. Both clients perform ECDH key exchange
+6. Derived shared secret is used for AES-GCM encryption
 
-#### Messaging
+#### Messaging (P2P)
 1. Sender encrypts message using hybrid encryption (ECDH + AES-GCM)
-2. Encrypted blob sent to server
-3. Server routes to recipient (or stores if offline)
-4. Recipient decrypts using their private key and ephemeral public key
+2. Encrypted blob sent directly to recipient via P2P connection
+3. Recipient decrypts using their private key and ephemeral public key
+4. Server is not involved in message transmission
 
 ---
 
@@ -156,9 +172,10 @@ This is a secure End-to-End Encrypted (E2EE) chat system implemented in Python u
 
 ### 4.1 Inherent Weaknesses
 
-1. **Trust in CA**
-   - Server acts as CA; compromise of server compromises entire PKI
-   - No certificate revocation list (CRL) checking in real-time
+1. **Server as Directory**
+   - Server only stores IPs, not messages (improved privacy)
+   - But server knows who is communicating with whom
+   - No message content stored, only metadata
 
 2. **Key Storage**
    - Private keys stored in memory only (lost on disconnect)
@@ -167,7 +184,7 @@ This is a secure End-to-End Encrypted (E2EE) chat system implemented in Python u
 3. **Metadata Exposure**
    - Usernames visible to server
    - Connection timing patterns
-   - Group membership visible
+   - IP addresses of online users visible
 
 4. **No Forward Secrecy for Groups**
    - Group keys are static until re-created
@@ -239,14 +256,14 @@ pip install -r requirements.txt
 
 ```bash
 cd src
-python -m server.server --host 0.0.0.0 --port 5000
+python -m server.server --host 0.0.0.0 --port 5555
 ```
 
 ### 6.3 Running the Client
 
 ```bash
 cd src
-python -m client.client --host localhost --port 5000 --username alice
+python -m client.client --host localhost --port 5555 --username alice
 ```
 
 ### 6.4 Client Commands
@@ -262,7 +279,8 @@ python -m client.client --host localhost --port 5000 --username alice
 #### Post-login Commands
 | Command | Description |
 |---------|-------------|
-| `msg <username> <message>` | Send private message |
+| `msg <username> <message>` | Send P2P message to user |
+| `connect <username>` | Request IP and connect P2P |
 | `users` | List online users |
 | `rooms` | List available rooms |
 | `create_room <name>` | Create new room |
@@ -293,6 +311,49 @@ python -m client.client --host localhost --port 5000 --username alice
 
 ## 7. File Structure
 
+```
+ProjetoSingle/
+├── work.md                 # Project requirements
+├── requirements.txt        # Python dependencies
+├── README.md              # This file
+├── src/
+│   ├── __init__.py
+│   ├── server/            # Server implementation
+│   │   ├── __init__.py
+│   │   ├── server.py      # Main server + admin CLI
+│   │   ├── tcp_handler.py # Client connection handling
+│   │   ├── user_manager.py # User auth/IP management
+│   │   ├── storage.py     # Persistence layer
+│   │   ├── message_router.py # P2P coordination
+│   │   └── ca.py          # Certificate Authority
+│   │
+│   ├── client/            # Client implementation
+│   │   ├── __init__.py
+│   │   ├── client.py     # TCP client + P2P listener
+│   │   ├── cli.py        # Command interpreter
+│   │   └── session_manager.py # Key management
+│   │
+│   ├── crypto/            # Cryptographic primitives
+│   │   ├── __init__.py
+│   │   ├── asymmetric.py  # RSA encryption
+│   │   ├── ecdh.py       # ECDH key exchange (PFS)
+│   │   ├── symmetric.py  # AES-GCM encryption
+│   │   ├── hybrid.py     # Hybrid encryption
+│   │   ├── certificates.py # X.509 certificates
+│   │   └── signatures.py  # Digital signatures
+│   │
+│   ├── protocol/          # Communication protocol
+│   │   ├── __init__.py
+│   │   ├── messages.py   # Message types
+│   │   └── commands.py   # Command parsing
+│   │
+│   └── utils/             # Shared utilities
+│       ├── __init__.py
+│       └── helpers.py    # Encoding, hashing, logging
+│
+└── data/                  # Runtime data (generated)
+    ├── server.db         # SQLite database
+    └── keys/             # CA keys and certificates
 ```
 ProjetoSingle/
 ├── work.md                 # Project requirements
@@ -357,7 +418,7 @@ All messages use a length-prefixed protocol over TCP:
 |--------------|-------------|
 | `register` | User registration with public key |
 | `auth` | User authentication |
-| `chat` | Send encrypted message |
+| `get_ip` | Request IP address of a user for P2P connection |
 | `create_room` | Create new chat room |
 | `join_room` | Join existing room |
 | `leave_room` | Leave room |
@@ -371,8 +432,9 @@ All messages use a length-prefixed protocol over TCP:
 |--------------|-------------|
 | `register_response` | Registration result |
 | `auth_response` | Authentication result |
+| `ip_response` | IP address response for P2P connection |
 | `chat_response` | Message delivery status |
-| `message` | Incoming direct message |
+| `message` | Incoming direct message (via P2P) |
 | `room_message` | Incoming room message |
 | `user_online` | User came online notification |
 | `user_offline` | User went offline notification |
