@@ -1,14 +1,6 @@
-"""
-Message Router
-=============
-Routes messages between users, handles online/offline delivery.
-Coordinates P2P connection establishment between users.
-
-IMPLEMENTAÇÃO:
-- Rooms em memória (dicionário com lock)
-- Offline messages usam storage SQLite
-- Notificações via handlers dos utilizadores
-"""
+# Routeia mensagens entre utilizadores e gere rooms de chat
+# Entrega imediata a online ou guarda offline via storage
+# Notifica contactos de mudanças de estado online/offline
 
 import logging
 import threading

@@ -1,180 +1,204 @@
-"""
-Storage
-======
-Persistent storage for users, messages, and server data.
-
-IMPLEMENTAÇÃO:
-- SQLite para persistência (ficheiro server.db)
-- Tabelas: users, offline_messages, rooms, room_members
-- Conexão com check_same_thread=False para threading
-"""
-
 import os
-import json
 import sqlite3
-import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, List, Dict, Any
 
 
 class Storage:
-    """
-    Persistent storage layer.
-    """
-    
     def __init__(self, data_dir: str = "data"):
-        """Inicializa storage com diretório de dados."""
-        # self.data_dir = data_dir
-        # self.db_path = os.path.join(data_dir, "server.db")
-        # self.conn = None
-        pass
-    
+        self.data_dir = data_dir
+        self.db_path = os.path.join(data_dir, "server.db")
+        self.conn: Optional[sqlite3.Connection] = None
+
     def initialize(self):
-        """Inicializa storage - cria base de dados e tabelas."""
-        # 1. os.makedirs(data_dir, exist_ok=True)
-        # 2. Conectar SQLite: sqlite3.connect(db_path)
-        # 3. _create_tables()
-        pass
-    
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self._create_tables()
+
     def _create_tables(self):
-        """Cria tabelas SQLite."""
-        # users: username PK, password, public_key, certificate
-        # offline_messages: id PK, recipient, sender, encrypted_content, etc.
-        # rooms: name PK, created_by
-        # room_members: room_name, username (PK composta)
-        pass
-    
-    def save_user(self, username: str, user_data: Dict[str, Any]):
-        """Guarda ou atualiza dados do utilizador."""
-        # INSERT OR REPLACE INTO users
-        pass
-    
-    def get_user(self, username: str) -> Optional[Dict[str, Any]]:
-        """Retorna dados do utilizador por username."""
-        # SELECT * FROM users WHERE username = ?
-        pass
-    
-    def get_all_users(self) -> List[Dict[str, Any]]:
-        """Retorna todos os utilizadores registados."""
-        # SELECT * FROM users
-        pass
-    
-    def update_last_login(self, username: str):
-        """Atualiza último login do utilizador."""
-        pass
-    
-    def delete_user(self, username: str):
-        """Apaga utilizador e dados associados."""
-        # DELETE FROM users WHERE username = ?
-        pass
-    
-    def store_offline_message(
-        self,
-        recipient: str,
-        sender: str,
-        encrypted_content: bytes,
-        message_id: str,
-        ephemeral_public_key: bytes = None,
-        nonce: bytes = None,
-        tag: bytes = None
-    ):
-        """Guarda mensagem para destinatário offline."""
-        # INSERT INTO offline_messages
-        pass
-    
-    def get_offline_messages(self, recipient: str) -> List[Dict[str, Any]]:
-        """Retorna mensagens offline para um utilizador."""
-        # SELECT * FROM offline_messages WHERE recipient = ? AND delivered = 0
-        pass
-    
-    def mark_offline_message_delivered(self, message_id: str):
-        """Marca mensagem offline como entregue."""
-        # UPDATE offline_messages SET delivered = 1 WHERE id = ?
-        pass
-    
-    def delete_offline_message(self, message_id: str):
-        """Apaga mensagem offline após entrega."""
-        # DELETE FROM offline_messages WHERE id = ?
-        pass
-    
-    def delete_all_offline_messages(self, recipient: str):
-        """Apaga todas as mensagens offline para um utilizador."""
-        # DELETE FROM offline_messages WHERE recipient = ?
-        pass
-    
-    def create_room(self, room_name: str, created_by: str) -> bool:
-        """Cria novo room de chat."""
-        # INSERT INTO rooms + INSERT INTO room_members (criador)
-        pass
-    
-    def delete_room(self, room_name: str):
-        """Elimina room de chat."""
-        # DELETE FROM room_members + DELETE FROM rooms
-        pass
-    
-    def room_exists(self, room_name: str) -> bool:
-        """Verifica se room existe."""
-        # SELECT 1 FROM rooms WHERE name = ?
-        pass
-    
-    def add_room_member(self, room_name: str, username: str) -> bool:
-        """Adiciona membro ao room."""
-        # INSERT INTO room_members (ignorar se já existe)
-        pass
-    
-    def remove_room_member(self, room_name: str, username: str):
-        """Remove membro do room."""
-        # DELETE FROM room_members
-        pass
-    
-    def get_room_members(self, room_name: str) -> List[str]:
-        """Retorna membros de um room."""
-        # SELECT username FROM room_members WHERE room_name = ?
-        pass
-    
-    def get_all_rooms(self) -> List[Dict[str, Any]]:
-        """Retorna todos os rooms."""
-        # SELECT name, created_by FROM rooms
-        pass
-    
-    def is_room_member(self, room_name: str, username: str) -> bool:
-        """Verifica se utilizador é membro do room."""
-        # SELECT 1 FROM room_members WHERE room_name = ? AND username = ?
-        pass
-    
-    def save_certificate(self, username: str, certificate: bytes):
-        """Guarda certificado do utilizador."""
-        # UPDATE users SET certificate = ? WHERE username = ?
-        pass
-    
-    def get_certificate(self, username: str) -> Optional[bytes]:
-        """Retorna certificado do utilizador."""
-        # SELECT certificate FROM users WHERE username = ?
-        pass
-    
-    def get_public_key(self, username: str) -> Optional[bytes]:
-        """Retorna chave pública do utilizador."""
-        # SELECT public_key FROM users WHERE username = ?
-        pass
-    
-    def save_public_key(self, username: str, public_key: bytes):
-        """Guarda chave pública do utilizador."""
-        # UPDATE users SET public_key = ? WHERE username = ?
-        pass
-    
-    def increment_message_count(self):
-        """Incrementa contador de mensagens."""
-        pass
-    
-    def get_message_count(self) -> int:
-        """Retorna número total de mensagens enviadas."""
-        pass
-    
-    def get_offline_message_count(self) -> int:
-        """Retorna número de mensagens offline em queue."""
-        # SELECT COUNT(*) FROM offline_messages WHERE delivered = 0
-        pass
-    
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                password_hash TEXT NOT NULL,
+                public_key BLOB,
+                certificate BLOB
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS offline_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipient TEXT NOT NULL,
+                sender TEXT NOT NULL,
+                encrypted_content BLOB NOT NULL,
+                nonce BLOB,
+                tag BLOB
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS rooms (
+                name TEXT PRIMARY KEY,
+                created_by TEXT NOT NULL,
+                FOREIGN KEY (created_by) REFERENCES users(username)
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS room_members (
+                room_name TEXT NOT NULL,
+                username TEXT NOT NULL,
+                PRIMARY KEY (room_name, username),
+                FOREIGN KEY (room_name) REFERENCES rooms(name),
+                FOREIGN KEY (username) REFERENCES users(username)
+            )
+        """)
+
+        self.conn.commit()
+
     def close(self):
-        """Fecha conexão com base de dados."""
-        # conn.close()
-        pass
+        if self.conn:
+            self.conn.close()
+
+    # USER FUNCTIONS
+    def get_user(self, username: str) -> Optional[Dict[str, Any]]:
+        # Retorna utilizador pelo username
+        cursor = self.conn.execute(
+            "SELECT username, password_hash, public_key, certificate FROM users WHERE username = ?",
+            (username,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def create_user(self, username: str, password_hash: str, public_key: Optional[bytes] = None,
+                    certificate: Optional[bytes] = None) -> bool:
+        # Cria novo utilizador
+        try:
+            self.conn.execute(
+                "INSERT INTO users (username, password_hash, public_key, certificate) VALUES (?, ?, ?, ?)",
+                (username, password_hash, public_key, certificate)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def delete_user(self, username: str) -> bool:
+        # Apaga utilizador
+        cursor = self.conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        # Lista todos os utilizadores
+        cursor = self.conn.execute("SELECT username FROM users")
+        return [{"username": row[0]} for row in cursor.fetchall()]
+
+    # OFFLINE MESSAGE FUNCTIONS
+    def store_offline_message(self, recipient: str, sender: str, encrypted_content: bytes,
+                               nonce: Optional[bytes] = None, tag: Optional[bytes] = None) -> int:
+        # Guarda mensagem offline
+        cursor = self.conn.execute(
+            "INSERT INTO offline_messages (recipient, sender, encrypted_content, nonce, tag) VALUES (?, ?, ?, ?, ?)",
+            (recipient, sender, encrypted_content, nonce, tag)
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_offline_messages(self, recipient: str) -> List[Dict[str, Any]]:
+        # Retorna mensagens offline de um destinatário
+        cursor = self.conn.execute(
+            "SELECT id, recipient, sender, encrypted_content, nonce, tag FROM offline_messages WHERE recipient = ?",
+            (recipient,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def delete_offline_message(self, message_id: int) -> bool:
+        # Apaga uma mensagem offline
+        cursor = self.conn.execute("DELETE FROM offline_messages WHERE id = ?", (message_id,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def clear_offline_messages(self, recipient: str) -> int:
+        # Apaga todas as mensagens offline de um utilizador
+        cursor = self.conn.execute("DELETE FROM offline_messages WHERE recipient = ?", (recipient,))
+        self.conn.commit()
+        return cursor.rowcount
+
+    # ROOM FUNCTIONS
+    def create_room(self, name: str, created_by: str) -> bool:
+        # Cria nova sala
+        try:
+            self.conn.execute("INSERT INTO rooms (name, created_by) VALUES (?, ?)", (name, created_by))
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def delete_room(self, name: str) -> bool:
+        # Apaga sala e os seus membros
+        self.conn.execute("DELETE FROM room_members WHERE room_name = ?", (name,))
+        cursor = self.conn.execute("DELETE FROM rooms WHERE name = ?", (name,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def get_room(self, name: str) -> Optional[Dict[str, Any]]:
+        # Retorna sala pelo nome
+        cursor = self.conn.execute("SELECT name, created_by FROM rooms WHERE name = ?", (name,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def list_rooms(self) -> List[Dict[str, Any]]:
+        # Lista todas as salas
+        cursor = self.conn.execute("SELECT name, created_by FROM rooms")
+        return [dict(row) for row in cursor.fetchall()]
+
+    # ROOM MEMBER FUNCTIONS
+    def add_room_member(self, room_name: str, username: str) -> bool:
+        # Adiciona membro a uma sala
+        try:
+            self.conn.execute(
+                "INSERT INTO room_members (room_name, username) VALUES (?, ?)",
+                (room_name, username)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def remove_room_member(self, room_name: str, username: str) -> bool:
+        # Remove membro de uma sala
+        cursor = self.conn.execute(
+            "DELETE FROM room_members WHERE room_name = ? AND username = ?",
+            (room_name, username)
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def get_room_members(self, room_name: str) -> List[str]:
+        # Retorna membros de uma sala
+        cursor = self.conn.execute(
+            "SELECT username FROM room_members WHERE room_name = ?",
+            (room_name,)
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+    def is_room_member(self, room_name: str, username: str) -> bool:
+        # Verifica se utilizador é membro de uma sala
+        cursor = self.conn.execute(
+            "SELECT 1 FROM room_members WHERE room_name = ? AND username = ?",
+            (room_name, username)
+        )
+        return cursor.fetchone() is not None
+
+    def get_user_rooms(self, username: str) -> List[str]:
+        # Retorna salas de um utilizador
+        cursor = self.conn.execute(
+            "SELECT room_name FROM room_members WHERE username = ?",
+            (username,)
+        )
+        return [row[0] for row in cursor.fetchall()]

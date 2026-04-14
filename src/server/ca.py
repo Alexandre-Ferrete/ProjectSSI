@@ -1,15 +1,5 @@
-"""
-Certificate Authority (CA)
-=========================
-Internal PKI - manages user certificates for the chat system.
-
-TODO:
-- Implement CA initialization
-- Implement certificate generation
-- Implement certificate signing
-- Implement certificate verification
-- Implement certificate revocation
-"""
+# PKI interna - emite e verifica certificados dos utilizadores
+# Funcionalidades: gerar chaves CA, assinar certificados, revogar
 
 import os
 import logging

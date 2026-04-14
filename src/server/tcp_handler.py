@@ -1,15 +1,6 @@
-"""
-TCP Handler
-=========
-Handles individual client connections - reads/writes messages on the wire.
-Manages P2P connection establishment between users.
-
-IMPLEMENTAÇÃO:
-- Receber dados com length prefix (4 bytes big-endian)
-- Parsar JSON da mensagem
-- Routear para handler correto conforme tipo
-- Enviar resposta com mesmo formato length+JSON
-"""
+# Trata conexão individual de cada cliente (corre em thread separada)
+# Recebe/envia mensagens com prefixo de tamanho (4 bytes + JSON)
+# Routeia mensagens para handlers conforme tipo (register, auth, get_ip, etc.)
 
 import socket
 import json
