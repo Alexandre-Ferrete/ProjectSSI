@@ -1,12 +1,10 @@
 import asyncio
-import json
 import logging
 import signal
-from typing import Dict, Any
 
-# Assumindo que estes ficheiros estão na mesma pasta
 from .storage import Storage
 from .user_manager import OnlineUserManager
+from .tcp_handler import ClientHandler
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -34,58 +32,8 @@ class ChatServer:
         """Gere a ligação de cada cliente."""
         addr = writer.get_extra_info('peername')
         logger.info(f"[+] Nova conexão: {addr}")
-        current_user = None
-
-        try:
-            while True:
-                try: 
-                    header = await asyncio.wait_for(reader.readexactly(4), timeout = 300.0)
-                    msg_len = int.from_bytes(header, byteorder='big')
-                    data = await asyncio.wait_for(reader.readexactly(msg_len), timeout=10.0)
-                except (asyncio.IncompleteReadError, asyncio.TimeoutError):
-                    break
-
-                if not data: break
-                    
-
-                message = data.decode().strip()
-                request = json.loads(message)
-                if not message: continue
-
-                response, auth_user = await self.process_command(request, addr, writer, current_user)
-                        
-                if auth_user:
-                    current_user = auth_user
-
-                resp_encoded = json.dumps(response).encode()
-                writer.write(len(resp_encoded).to_bytes(4, byteorder='big') + resp_encoded)
-                await writer.drain()
-
-        except Exception as e:
-            logger.error(f"[!] Erro com {addr}: {e}")
-        finally:
-            if current_user:
-                await self.online_users.remove_online_user(current_user)
-                logger.info(f"[-] Utilizador '{current_user}' saiu.")
-            writer.close()
-            await writer.wait_closed()
-
-    async def process_command(self, request: Dict[str, Any], addr: tuple, writer: asyncio.StreamWriter, current_user: str = None):
-        cmd = request.get("type")
-        data = request.get("data", {})
-
-        # Exemplo de proteção: só permite GET_USERS se estiver logado
-        if cmd == "GET_USERS" and not current_user:
-            return {"status": "error", "message": "Não autenticado"}, None
-
-        if cmd == "LOGIN":
-            user = data.get("username")
-            # ... lógica de verificação na DB ...
-            if login_sucesso:
-                await self.online_users.add_online_user(user, addr[0], data.get("p2p_port", 0), writer)
-                return {"status": "success", "message": "Login OK"}, user # Retorna o user para o handle_client
-
-        return {"status": "error", "message": "Comando desconhecido"}, None
+        handler = ClientHandler(reader, writer, self)
+        await handler.handle()
 
     async def shutdown(self):
         """Encerramento limpo com proteção contra race conditions."""
