@@ -1,212 +1,242 @@
-"""
-Client Main Entry Point
-======================
-TCP client that connects to the chat server.
-Handles P2P connections for direct messaging between users.
-
-IMPLEMENTAÇÃO:
-- Socket TCP para conectar ao servidor
-- Socket P2P separado para listening (porta dinâmica)
-- Thread para receber mensagens do servidor
-- Thread para aceitar conexões P2P
-- Dicionário para guardar conexões P2P ativas
-"""
-
 import socket
 import threading
-import logging
 import struct
 import json
-from typing import Optional, Callable
+import time
+from typing import Optional, Dict
+from protocol.messages import Message, MessageType
+from client.session_manager import SessionManager
 
+# Nota: importar as funções da Pessoa 3 aqui quando estiverem prontas
+# from crypto.hybrid import encrypt_content, decrypt_content
 
 class ChatClient:
-    """
-    Main client class that connects to the server.
-    Handles P2P connections for E2EE messaging.
-    """
+    def __init__(self, server_host: str = 'localhost', server_port: int = 5555):
+        self.server_addr = (server_host, server_port)
+        self.server_socket = None
+
+        self.session_manager = SessionManager()
+        
+        self.username = None
+        self.running = False
+        
+        # P2P Listener
+        self.p2p_socket = None
+        self.p2p_port = 0
+        
+        # Sessões Ativas: { "username": {"socket": sock, "shared_key": key} }
+        self.peer_sessions: Dict[str, dict] = {}
+        
+        # Pendente: { "username": "mensagem_para_enviar_depois_de_conectar" }
+        self.pending_chats = {}
+
+    # --- Utilitários de Comunicação (O "Framer") ---
     
-    def __init__(self, host: str = 'localhost', port: int = 5555):
-        """Inicializa cliente com host e porta do servidor."""
-        # self.host = host
-        # self.port = port
-        # self.server_socket = None
-        # self.username = None
-        # self.connected = False
-        # self.running = False
-        # self.p2p_socket = None
-        # self.p2p_port = 0
-        # self.p2p_connections = {}  # ip -> socket
-        # self.message_callback = None
-        pass
-    
+    def _send_packet(self, sock: socket.socket, message: Message):
+        """Envia qualquer mensagem no formato [Tamanho][JSON]."""
+        try:
+            data = message.to_json().encode('utf-8')
+            header = struct.pack('!I', len(data))
+            sock.sendall(header + data)
+        except Exception as e:
+            print(f"Erro ao enviar: {e}")
+
+    def _recv_packet(self, sock: socket.socket) -> Optional[Message]:
+        """Lê do socket seguindo o protocolo de tamanho."""
+        try:
+            header = sock.recv(4)
+            if not header: return None
+            length = struct.unpack('!I', header)[0]
+            
+            data = b""
+            while len(data) < length:
+                chunk = sock.recv(min(length - len(data), 4096))
+                if not chunk: break
+                data += chunk
+            
+            return Message.from_json(data.decode('utf-8'))
+        except:
+            return None
+
+    # --- Gestão de Conexão com Servidor ---
+
     def connect(self) -> bool:
-        """Conecta ao servidor."""
-        # 1. Criar socket TCP
-        # 2. connect((host, port))
-        # 3. connected = True
-        # 4. Iniciar thread _receive_loop()
-        # 5. Retornar True/False
-        pass
-    
-    def start_p2p_listener(self, port: int = 0) -> int:
-        """Inicia listener P2P na porta disponível."""
-        # 1. Criar socket TCP
-        # 2. bind(('0.0.0.0', port)) - se port=0, escolhe disponível
-        # 3. listen(5)
-        # 4. Obter porta real: getsockname()[1]
-        # 5. Iniciar thread _p2p_accept_loop()
-        # 6. Retornar porta
-        pass
-    
+        try:
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.connect(self.server_addr)
+            self.running = True
+            
+            # Iniciar escuta do servidor
+            threading.Thread(target=self._server_receive_loop, daemon=True).start()
+            return True
+        except Exception as e:
+            print(f"Falha ao ligar ao servidor: {e}")
+            return False
+
+    def login(self, username, password):
+        self.username = username
+        self.session_manager.set_username(username) # <--- ADICIONAR ISTO
+        # Primeiro, iniciamos o nosso "ouvido" P2P para saber que porta enviar ao servidor
+        self.start_p2p_listener()
+        
+        payload = {
+            "username": username,
+            "password": password,
+            "p2p_port": self.p2p_port # CRÍTICO: Pessoa 1 precisa disto
+        }
+        msg = Message(MessageType.AUTH.value, username, payload)
+        self._send_packet(self.server_socket, msg)
+
+    # --- Lógica P2P (Onde a magia acontece) ---
+
+    def start_p2p_listener(self):
+        """Abre uma porta para receber outros utilizadores."""
+        self.p2p_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.p2p_socket.bind(('0.0.0.0', 0)) # Porta dinâmica
+        self.p2p_port = self.p2p_socket.getsockname()[1]
+        self.p2p_socket.listen(5)
+        
+        threading.Thread(target=self._p2p_accept_loop, daemon=True).start()
+        print(f"[*] Listening para P2P na porta {self.p2p_port}")
+
     def _p2p_accept_loop(self):
-        """Aceita conexões P2P recebidas em thread separada."""
-        # Loop while running:
-        #   client_socket, address = p2p_socket.accept()
-        #   Iniciar thread _handle_p2p_client()
-        pass
-    
-    def _handle_p2p_client(self, client_socket, address):
-        """Handle conexão P2P recebida de peer."""
-        # Loop: receber mensagens (mesmo protocolo length+JSON)
-        # Se callback configurado, chamar callback(mensagem, "p2p")
-        pass
-    
-    def disconnect(self):
-        """Desconecta do servidor e fecha conexões P2P."""
-        # 1. running = False
-        # 2. Fechar server_socket
-        # 3. Fechar p2p_socket
-        # 4. Fechar todas as conexões em p2p_connections
-        # 5. connected = False
-        pass
-    
-    def is_connected(self) -> bool:
-        """Verifica se está conectado ao servidor."""
-        # return self.connected
-        pass
-    
-    def send_message(self, message: dict):
-        """Envia mensagem ao servidor."""
-        # 1. json.dumps(message).encode()
-        # 2. struct.pack("!I", len(data))
-        # 3. server_socket.sendall(length + data)
-        pass
-    
-    def register(self, username: str, password: str) -> bool:
-        """Regista nova conta de utilizador."""
-        # send_message({"type": "register", "username": ..., "password": ..., "public_key": ...})
-        pass
-    
-    def login(self, username: str, password: str) -> bool:
-        """Autentica-se no servidor."""
-        # send_message({"type": "auth", "username": ..., "password": ...})
-        # Guardar username
-        pass
-    
-    def logout(self):
-        """ Faz logout do servidor. """
-        # send_message({"type": "disconnect"})
-        # disconnect()
-        pass
-    
-    def request_user_ip(self, username: str) -> Optional[str]:
-        """ Request IP do utilizador ao servidor para conexão P2P. """
-        # send_message({"type": "get_ip", "username": username})
-        # Retornar None (resposta vem de forma assíncrona)
-        pass
-    
-    def connect_to_peer(self, ip: str) -> bool:
-        """Estabelece conexão direta P2P ao peer."""
-        # 1. Parse ip (host:port)
-        # 2. Criar socket TCP
-        # 3. connect((host, port))
-        # 4. Guardar em p2p_connections[ip] = socket
-        pass
-    
-    def send_p2p_message(self, ip: str, message: dict) -> bool:
-        """Envia mensagem encriptada diretamente ao peer via P2P."""
-        # 1. Obter socket de p2p_connections[ip]
-        # 2. Se não existir: connect_to_peer(ip) primeiro
-        # 3. Enviar com protocolo length+JSON
-        pass
-    
-    def send_chat(self, recipient: str, plaintext: str) -> bool:
-        """Encripta mensagem com E2EE e envia via P2P."""
-        # 1. request_user_ip(recipient) para obter IP
-        # 2. Quando IP recebido: conectar P2P
-        # 3. Encriptar mensagem (session_manager.encrypt_message)
-        # 4. send_p2p_message(ip, msg_encriptada)
-        pass
-    
-    def send_room_message(self, room_name: str, plaintext: str) -> bool:
-        """Envia mensagem para room."""
-        pass
-    
-    def create_room(self, room_name: str) -> bool:
-        """Cria novo room de chat."""
-        pass
-    
-    def join_room(self, room_name: str) -> bool:
-        """Entra num room existente."""
-        pass
-    
-    def leave_room(self, room_name: str) -> bool:
-        """Sai de um room."""
-        pass
-    
-    def get_online_users(self):
-        """Request lista de utilizadores online."""
-        pass
-    
-    def get_rooms(self):
-        """Request lista de rooms disponíveis."""
-        pass
-    
-    def start(self):
-        """Inicia cliente - conecta e inicia CLI."""
-        # 1. connect()
-        # 2. run()
-        pass
-    
-    def run(self):
-        """Loop principal do cliente - processa input do utilizador."""
-        # Loop: input() → parse_command() → execute_command()
-        # Comandos: msg, users, rooms, create_room, join, leave, etc.
-        pass
-    
-    def _receive_loop(self):
-        """Recebe mensagens do servidor em thread separada."""
-        # Loop while running:
-        #   Receber 4 bytes (length)
-        #   Receber N bytes (JSON)
-        #   json.loads()
-        #   _handle_server_message()
-        pass
-    
-    def _handle_server_message(self, message: dict):
-        """Handle mensagens do servidor (respostas auth, IP, etc)."""
-        # 1. message.get("type")
-        # 2. Se "ip_response" + success:
-        #      - Guardar IP
-        #      - connect_to_peer(ip)
-        # 3. Se "auth_response" + success:
-        #      - username = message["username"]
-        #      - start_p2p_listener()
-        pass
-    
-    def set_message_callback(self, callback: Callable):
-        """Define callback para mensagens P2P recebidas."""
-        # self.message_callback = callback
-        pass
+        while self.running:
+            client_sock, addr = self.p2p_socket.accept()
+            threading.Thread(target=self._handle_peer_connection, args=(client_sock, addr)).start()
 
+    def _handle_peer_connection(self, sock, addr):
+        """Lida com mensagens vindas DIRETAMENTE de outro cliente."""
+        peer_user = None
+        while self.running:
+            msg = self._recv_packet(sock)
+            if not msg: break
+            
+            peer_user = msg.sender
+            
+            if msg.msg_type == MessageType.P2P_HELLO.value:
+            # Processar a chave do outro e gerar a chave simétrica
+                peer_pub_key = msg.payload.get("pub_key")
+                self.session_manager.process_peer_handshake(peer_user, peer_pub_key)
+                
+                # Se fomos nós que recebemos a ligação, também temos de mandar a nossa chave!
+                if peer_user not in self.peer_sessions:
+                    my_pub = self.session_manager.get_handshake_data(peer_user)
+                    reply = Message(MessageType.P2P_HELLO.value, self.username, {"pub_key": my_pub})
+                    self._send_packet(sock, reply)
+                    self.peer_sessions[peer_user] = {"socket": sock}
 
-def main():
-    """Ponto de entrada do cliente."""
-    # 1. Criar ChatClient
-    # 2. client.start()
-    pass
+            # CASO 2: Recebeste uma mensagem de chat
+            elif msg.msg_type == MessageType.P2P_MSG.value:
+                texto_limpo = self.session_manager.decrypt_from_peer(peer_user, msg.payload)
+                if texto_limpo:
+                    print(f"\n[{peer_user}]: {texto_limpo}")
+                else:
+                    print(f"\n[!] Erro ao desencriptar mensagem de {peer_user}")
 
+    def connect_to_peer(self, username, ip, port):
+        """Inicia uma conexão direta com outro user."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((ip, int(port)))
+            
+            # CORREÇÃO: Usar o SessionManager para gerar a chave efémera real
+            my_pub_b64 = self.session_manager.get_handshake_data(username)
+            handshake = Message(MessageType.P2P_HELLO.value, self.username, {"pub_key": my_pub_b64})
+            self._send_packet(sock, handshake)
+            
+            # Guardar socket na sessão
+            self.peer_sessions[username] = {"socket": sock}
+            
+            threading.Thread(target=self._handle_peer_connection, args=(sock, (ip, port)), daemon=True).start()
+            
+        except Exception as e:
+            print(f"Erro ao ligar a {username}: {e}")
+
+    # --- Loops de Receção e CLI ---
+
+    def _server_receive_loop(self):
+        while self.running:
+            msg = self._recv_packet(self.server_socket)
+            if not msg: break
+            
+            
+            if msg.msg_type == MessageType.IP_RESPONSE.value:
+                dest_user = msg.payload.get('target_user')
+                ip = msg.payload.get('ip')
+                port = msg.payload.get('port')
+                
+                if ip:
+                    print(f"[*] {dest_user} encontrado em {ip}:{port}. A conectar...")
+                    self.connect_to_peer(dest_user, ip, port)
+                    
+                    # ESPERA UM POUCO para o handshake acontecer e depois envia a pendente
+                    time.sleep(0.5) 
+                    if dest_user in self.pending_chats:
+                        content = self.pending_chats.pop(dest_user)
+                        
+                        # CORREÇÃO: Encriptar a mensagem pendente antes de enviar
+                        encrypted_payload = self.session_manager.encrypt_for_peer(dest_user, content)
+                        if encrypted_payload:
+                            p2p_msg = Message(MessageType.P2P_MSG.value, self.username, encrypted_payload)
+                            self._send_packet(self.peer_sessions[dest_user]["socket"], p2p_msg)
+                else:
+                    print(f"[!] {dest_user} está offline.")
+                    self.pending_chats.pop(dest_user, None) # Limpa se estiver offline
+
+            elif msg.msg_type == MessageType.USERS_LIST.value:
+                print(f"[*] Utilizadores Online: {msg.payload.get('users')}")
+
+    def run_cli(self):
+        print("--- Secure P2P Chat ---")
+        while self.running:
+            raw_input = input("> ").strip()
+            if not raw_input: continue
+            
+            parts = raw_input.split(" ", 2)
+            cmd = parts[0]
+
+            # 1. COMANDO DE CHAT
+            if cmd == "/chat" and len(parts) > 2:
+                target, text = parts[1], parts[2]
+                
+                if target in self.peer_sessions:
+                    encrypted_payload = self.session_manager.encrypt_for_peer(target, text)
+                    if encrypted_payload:
+                        msg = Message(MessageType.P2P_MSG.value, self.username, encrypted_payload)
+                        self._send_packet(self.peer_sessions[target]["socket"], msg)
+                    else:
+                        print(f"[!] Erro: Sessão com {target} não está pronta.")
+                else:
+                    # Se não temos conexão, pedimos o IP ao servidor
+                    self.pending_chats[target] = text 
+                    print(f"[*] A pedir localização de {target}...")
+                    req = Message(MessageType.GET_IP.value, self.username, {"target_user": target})
+                    self._send_packet(self.server_socket, req)
+
+            # 2. COMANDO DE LISTAR UTILIZADORES (Agora fora do IF do chat)
+            elif cmd == "/list":
+                req = Message(MessageType.GET_USERS.value, self.username, {})
+                self._send_packet(self.server_socket, req)
+            
+            # 3. COMANDO PARA SAIR (Bom para a Pessoa 2 implementar)
+            elif cmd == "/exit":
+                self.stop()
+            
+            else:
+                if cmd == "/chat":
+                    print("Uso: /chat <username> <mensagem>")
+                else:
+                    print(f"Comando desconhecido: {cmd}")
+
+    def stop(self):
+        self.running = False
+        if self.server_socket: self.server_socket.close()
+        print("Desconectado.")
 
 if __name__ == "__main__":
-    main()
+    client = ChatClient()
+    if client.connect():
+        # Exemplo rápido: o login deveria vir de um input
+        client.login("alice", "senha123")
+        client.run_cli()
+        

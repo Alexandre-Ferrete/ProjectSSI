@@ -21,18 +21,21 @@ class MessageType(Enum):
     REGISTER = "register"
     AUTH = "auth"
     GET_IP = "get_ip"
+    GET_USERS = "get_users"      
     DISCONNECT = "disconnect"
-    RESPONSE = "response"  # Resposta genérica (Sucesso/Erro)
+    
+    # Respostas do Servidor
+    RESPONSE = "response"         # Sucesso/Erro genérico
+    IP_RESPONSE = "ip_response"   # Contém IP e Porta do alvo
+    USERS_LIST = "users_list"     # Lista de quem está online
     
     # Fluxo P2P (Client <-> Client)
-    P2P_HELLO = "p2p_hello"       # Início do ECDH Handshake
-    P2P_MSG = "p2p_msg"           # Mensagem de chat real
+    P2P_HELLO = "p2p_hello"
+    P2P_MSG = "p2p_msg"
     
     # Grupos e Offline
-    ROOM_ACTION = "room_action"   # Join/Leave/Create
-    OFFLINE_FETCH = "off_fetch"   # Pedir mensagens guardadas
-    OFFLINE_STORE = "off_store"   # Servidor a entregar mensagens
-
+    ROOM_ACTION = "room_action"
+    OFFLINE_STORE = "off_store"
 
 @dataclass
 class Message:
@@ -66,7 +69,6 @@ def create_register_msg(username, pwd_hash, pub_key) -> Message:
     )
 
 def create_p2p_chat_msg(sender, recipient, encrypted_content, nonce, tag) -> Message:
-    """A estrutura que a Pessoa 3 vai precisar para o AES-GCM"""
     return Message(
         msg_type=MessageType.P2P_MSG.value,
         sender=sender,

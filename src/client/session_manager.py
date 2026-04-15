@@ -1,125 +1,165 @@
-"""
-Session Manager
-=============
-Manages user keys, certificates, and session state.
-
-TODO:
-- Implement key generation and storage
-- Implement certificate handling
-- Implement session key management
-- Implement message encryption/decryption
-"""
-
 import os
 import json
-import logging
+import base64
 from typing import Optional, Dict, Any, Tuple
 
+# NOTA: Importar as funções da Pessoa 3 aqui
+# from crypto.rsa import generate_rsa_keypair
+# from crypto.dh import generate_dh_keypair, compute_shared_secret
+# from crypto.aes import encrypt_aes_gcm, decrypt_aes_gcm
 
 class SessionManager:
+    
     """
-    Manages cryptographic session for the client.
+    Gere as chaves de identidade (longo prazo) e as chaves de sessão (efémeras) para o P2P.
     """
     
     def __init__(self, username: str = None, data_dir: str = "client_data"):
-        """TODO: Initialize session manager."""
-        pass
-    
+        self.username = username
+        self.data_dir = data_dir
+        
+        # Chaves de Identidade (Longo prazo - RSA/Ed25519)
+        self.identity_priv_key: Optional[bytes] = None
+        self.identity_pub_key: Optional[bytes] = None
+        
+        # Estado P2P
+        # Guarda a nossa chave privada efémera temporária antes de calcular o segredo
+        self.pending_ephemeral_priv_keys: Dict[str, bytes] = {}
+        
+        # A "Caixa Forte": Guarda a chave simétrica final partilhada com cada amigo
+        # Ex: {"bob": b"chave_secreta_aes_256"}
+        self.active_sessions: Dict[str, bytes] = {}
+        
+        if username:
+            self._ensure_dir()
+
     def set_username(self, username: str):
-        """TODO: Set username and update directories."""
-        pass
-    
-    def generate_keypair(self) -> Tuple[bytes, bytes]:
-        """TODO: Generate RSA keypair for the user."""
-        pass
-    
-    def load_keys(self) -> bool:
-        """TODO: Load existing keys from storage."""
-        pass
-    
-    def save_keys(self, private_key_pem: bytes, public_key_pem: bytes):
-        """TODO: Save keys to storage."""
-        pass
-    
-    def set_certificate(self, certificate: bytes):
-        """TODO: Set user's certificate."""
-        pass
-    
-    def get_certificate(self) -> Optional[bytes]:
-        """TODO: Get user's certificate."""
-        pass
-    
-    def set_ca_certificate(self, ca_cert: bytes):
-        """TODO: Set CA certificate for verification."""
-        pass
-    
-    def get_ca_certificate(self) -> Optional[bytes]:
-        """TODO: Get CA certificate."""
-        pass
-    
-    def verify_certificate(self, cert: bytes) -> bool:
-        """TODO: Verify a certificate against CA certificate."""
-        pass
-    
-    def generate_ephemeral_keypair(self) -> Tuple[bytes, bytes]:
-        """TODO: Generate ephemeral ECDH keypair for session."""
-        pass
-    
-    def perform_key_exchange(self, recipient: str, their_public_key: bytes) -> bytes:
-        """TODO: Perform ECDH key exchange with recipient."""
-        pass
-    
-    def get_session_key(self, recipient: str) -> Optional[bytes]:
-        """TODO: Get existing session key for recipient."""
-        pass
-    
-    def has_session_key(self, recipient: str) -> bool:
-        """TODO: Check if session key exists for recipient."""
-        pass
-    
-    def clear_session_key(self, recipient: str):
-        """TODO: Clear session key."""
-        pass
-    
-    def add_recipient_key(self, username: str, public_key: bytes):
-        """TODO: Store recipient's public key."""
-        pass
-    
-    def get_recipient_key(self, username: str) -> Optional[bytes]:
-        """TODO: Get recipient's public key."""
-        pass
-    
-    def remove_recipient_key(self, username: str):
-        """TODO: Remove recipient's public key."""
-        pass
-    
-    def get_public_key_bytes(self) -> Optional[bytes]:
-        """TODO: Get public key as bytes for transmission."""
-        pass
-    
-    def get_public_key_b64(self) -> Optional[str]:
-        """TODO: Get public key as base64 for transmission."""
-        pass
-    
-    def clear_all_session_keys(self):
-        """TODO: Clear all session keys (on logout)."""
-        pass
-    
-    def encrypt_message(self, recipient: str, plaintext: bytes) -> Dict[str, Any]:
-        """TODO: Encrypt a message for recipient using ECDH."""
-        pass
-    
-    def decrypt_message(
-        self,
-        sender: str,
-        encrypted_content_b64: str,
-        ephemeral_pub_b64: str,
-        nonce_b64: str,
-        tag_b64: str
-    ) -> bytes:
-        """TODO: Decrypt a message from sender."""
-        pass
-    
-    def has_keys(self) -> bool:
-        """TODO: Check if user has keys generated."""
-        pass
+        """Define o username e garante que a pasta de dados existe."""
+        self.username = username
+        self._ensure_dir()
+        print(f"[*] SessionManager configurado para: {username}")
+
+    def _ensure_dir(self):
+        """Garante que a pasta para guardar as chaves existe."""
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
+
+    # ==========================================
+    # 1. CHAVES DE IDENTIDADE (Para o Servidor)
+    # ==========================================
+
+    def load_or_generate_identity_keys(self) -> str:
+        """
+        Carrega as chaves do disco. Se não existirem, pede à Pessoa 3 para gerar.
+        Retorna a chave pública em Base64 para enviar no REGISTER/AUTH.
+        """
+        priv_path = os.path.join(self.data_dir, f"{self.username}_priv.pem")
+        pub_path = os.path.join(self.data_dir, f"{self.username}_pub.pem")
+        
+        if os.path.exists(priv_path) and os.path.exists(pub_path):
+            with open(priv_path, "rb") as f: self.identity_priv_key = f.read()
+            with open(pub_path, "rb") as f: self.identity_pub_key = f.read()
+        else:
+            # CHAMAR PESSOA 3: Gerar par de chaves RSA
+            # self.identity_priv_key, self.identity_pub_key = generate_rsa_keypair()
+            
+            # (Simulação temporária)
+            self.identity_priv_key, self.identity_pub_key = b"priv", b"pub_key_base64"
+            
+            with open(priv_path, "wb") as f: f.write(self.identity_priv_key)
+            with open(pub_path, "wb") as f: f.write(self.identity_pub_key)
+            
+        return base64.b64encode(self.identity_pub_key).decode('utf-8')
+
+    # ==========================================
+    # 2. HANDSHAKE P2P (Diffie-Hellman)
+    # ==========================================
+
+    def get_handshake_data(self, peer_username: str) -> str:
+        """
+        Gera uma chave efémera para iniciar conversa com um peer.
+        Retorna a chave pública efémera (em Base64) para colocar no P2P_HELLO.
+        """
+        # CHAMAR PESSOA 3: Gerar chaves Diffie-Hellman para esta sessão
+        # eph_priv, eph_pub = generate_dh_keypair()
+        
+        # (Simulação temporária)
+        eph_priv, eph_pub = b"eph_priv", b"minha_chave_publica_efemera"
+        
+        # Guardamos a privada para podermos calcular o segredo quando o peer responder
+        self.pending_ephemeral_priv_keys[peer_username] = eph_priv
+        
+        return base64.b64encode(eph_pub).decode('utf-8')
+
+    def process_peer_handshake(self, peer_username: str, peer_pub_key_b64: str):
+        """
+        Recebe a chave pública efémera do peer e calcula a chave simétrica final.
+        """
+        peer_pub_key = base64.b64decode(peer_pub_key_b64)
+        my_eph_priv = self.pending_ephemeral_priv_keys.pop(peer_username, None)
+        
+        if not my_eph_priv:
+            print(f"[Erro] Handshake com {peer_username} falhou: Chave privada efémera não encontrada.")
+            return
+
+        # CHAMAR PESSOA 3: Calcular Segredo Partilhado (Diffie-Hellman)
+        # shared_secret = compute_shared_secret(my_eph_priv, peer_pub_key)
+        
+        # (Simulação temporária)
+        shared_secret = b"CHAVE_SIMETRICA_SUPER_SECRETA"
+        
+        # Guardar a chave final na sessão ativa!
+        self.active_sessions[peer_username] = shared_secret
+        print(f"[*] Sessão criptográfica estabelecida com {peer_username}!")
+
+    # ==========================================
+    # 3. ENCRIPTAÇÃO DE MENSAGENS (AES)
+    # ==========================================
+
+    def encrypt_for_peer(self, peer_username: str, plaintext: str) -> Optional[Dict[str, str]]:
+        """
+        Usa a chave partilhada para encriptar a mensagem. 
+        Retorna dicionário perfeito para a tua dataclass `Message`.
+        """
+        if peer_username not in self.active_sessions:
+            print(f"[Erro] Não há sessão segura com {peer_username}")
+            return None
+            
+        shared_key = self.active_sessions[peer_username]
+        
+        # CHAMAR PESSOA 3: Encriptar (ex: AES-GCM)
+        # ciphertext, nonce, tag = encrypt_aes_gcm(shared_key, plaintext.encode('utf-8'))
+        
+        # (Simulação temporária)
+        ciphertext = f"ENC({plaintext})".encode('utf-8')
+        nonce, tag = b"nonce", b"tag"
+        
+        return {
+            "content": base64.b64encode(ciphertext).decode('utf-8'),
+            "nonce": base64.b64encode(nonce).decode('utf-8'),
+            "tag": base64.b64encode(tag).decode('utf-8')
+        }
+
+    def decrypt_from_peer(self, peer_username: str, payload: dict) -> Optional[str]:
+        """
+        Usa a chave partilhada para desencriptar a mensagem recebida.
+        """
+        if peer_username not in self.active_sessions:
+            return None
+            
+        shared_key = self.active_sessions[peer_username]
+        
+        ciphertext = base64.b64decode(payload["content"])
+        nonce = base64.b64decode(payload["nonce"])
+        tag = base64.b64decode(payload["tag"])
+        
+        # CHAMAR PESSOA 3: Desencriptar
+        # try:
+        #     plaintext = decrypt_aes_gcm(shared_key, ciphertext, nonce, tag)
+        #     return plaintext.decode('utf-8')
+        # except Exception as e:
+        #     print("Erro na verificação da mensagem (Alguém alterou os dados!)")
+        #     return None
+        
+        # (Simulação temporária - remove a string "ENC(" e ")")
+        return ciphertext.decode('utf-8').replace("ENC(", "").replace(")", "")
