@@ -54,25 +54,30 @@ class ClientHandler:
             return None
 
     def _parse_request(self, message_text: str) -> Dict[str, Any]:
-        """Normaliza o formato recebido para {type, sender, data}."""
         try:
-            message = Message.from_json(message_text)
-            return {"type": message.msg_type, "sender": message.sender, "data": message.payload}
-        except Exception:
             raw = json.loads(message_text)
-            if "type" in raw or "data" in raw:
-                return raw
-            return {"type": raw.get("msg_type"), "sender": raw.get("sender"), "data": raw.get("payload", {})}
+            # Tenta ler msg_type (teu) ou type (dele)
+            t = raw.get("msg_type") or raw.get("type")
+            s = raw.get("sender")
+            # Tenta ler payload (teu) ou data (dele)
+            d = raw.get("payload") or raw.get("data") or {}
+            
+            return {"type": t, "sender": s, "data": d}
+        except Exception as e:
+            logger.error(f"Erro no parsing: {e}")
+            return {"type": None, "sender": None, "data": {}}
 
     def _build_response(self, msg_type: MessageType, sender: str, payload: Dict[str, Any]) -> Message:
         return Message(msg_type=msg_type.value, sender=sender, payload=payload)
 
     async def process_command(self, request: Dict[str, Any]):
         """Executa a lógica de cada comando suportado pelo protocolo."""
+        # O _parse_request já normalizou os campos para "type" e "data"
         cmd = (request.get("type") or "").lower()
         data = request.get("data", {}) or {}
         sender = request.get("sender") or self.username or "server"
 
+        # 1. REGISTO
         if cmd == MessageType.REGISTER.value:
             username = data.get("username") or sender
             password = data.get("password")
@@ -82,6 +87,7 @@ class ClientHandler:
             if not username or not password:
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Username e password são obrigatórios"}), None, False
 
+            # Verifica se o utilizador já existe na DB
             if self.server.storage.get_user(username):
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Utilizador já existe"}), None, False
 
@@ -91,33 +97,46 @@ class ClientHandler:
 
             return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Registo efetuado com sucesso"}), None, False
 
+        # 2. LOGIN (AUTH) - CORRIGIDO
         if cmd == MessageType.AUTH.value:
             username = data.get("username")
             password = data.get("password")
             p2p_port = int(data.get("p2p_port", 0) or 0)
 
+            # Validação de campos vazios
             if not username or not password:
-                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Credenciais inválidas"}), None, False
+                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Credenciais incompletas"}), None, False
 
+            # Busca o utilizador na base de dados
             user = self.server.storage.get_user(username)
-            if not user or user.get("password_hash") != password:
-                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Login inválido"}), None, False
+            
+            # CORREÇÃO CRÍTICA: Se 'user' for None, o utilizador não existe.
+            if user is None:
+                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Utilizador não encontrado"}), None, False
 
+            # Verifica a password
+            if user.get("password_hash") != password:
+                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Password incorreta"}), None, False
+
+            # Se passou as verificações, adiciona aos online
             await self.server.online_users.add_online_user(username, self.address[0], p2p_port, self.writer)
             return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Login OK", "username": username}), username, False
 
+        # 3. OBTER IP (Para P2P)
         if cmd == MessageType.GET_IP.value:
             if not self.username:
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Não autenticado"}), None, False
 
             target_user = data.get("target_user")
             address = await self.server.online_users.get_user_address(target_user)
+            
             if address:
                 ip, port = address
                 return self._build_response(MessageType.IP_RESPONSE, "server", {"target_user": target_user, "ip": ip, "port": port, "status": "success"}), None, False
 
             return self._build_response(MessageType.IP_RESPONSE, "server", {"target_user": target_user, "ip": None, "port": None, "status": "offline"}), None, False
 
+        # 4. LISTAR UTILIZADORES
         if cmd == MessageType.GET_USERS.value:
             if not self.username:
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Não autenticado"}), None, False
@@ -125,9 +144,11 @@ class ClientHandler:
             users = await self.server.online_users.list_online_users()
             return self._build_response(MessageType.USERS_LIST, "server", {"users": users}), None, False
 
+        # 5. DESCONECTAR
         if cmd == MessageType.DISCONNECT.value:
             return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Desconectado"}), None, True
 
+        # COMANDO DESCONHECIDO
         return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": f"Comando desconhecido: {cmd}"}), None, False
 
     async def _handle_disconnect(self):

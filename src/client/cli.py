@@ -1,133 +1,85 @@
-"""
-CLI (Command Line Interface)
-==========================
-User interface for the chat client.
-
-TODO:
-- Implement command input
-- Implement command parsing
-- Implement user output formatting
-"""
-
-import sys
-import getpass
-import logging
-from typing import Optional, List, Dict, Any
+import socket
+import threading
+import struct
+import json
+import time
+from typing import Optional, Dict
+from protocol.messages import Message, MessageType
+from client.session_manager import SessionManager
 
 
-class CLI:
-    """
-    Command-line interface for the chat client.
-    """
-    
-    def __init__(self, client):
-        """TODO: Initialize CLI."""
-        pass
-    
-    def display_welcome(self):
-        """TODO: Display welcome message."""
-        pass
-    
-    def display_help(self):
-        """TODO: Display help message."""
-        pass
-    
-    def display_error(self, message: str):
-        """TODO: Display error message."""
-        pass
-    
-    def display_success(self, message: str):
-        """TODO: Display success message."""
-        pass
-    
-    def display_message(self, sender: str, content: str):
-        """TODO: Display incoming message."""
-        pass
-    
-    def display_room_message(self, room: str, sender: str, content: str):
-        """TODO: Display incoming room message."""
-        pass
-    
-    def display_notification(self, message: str):
-        """TODO: Display notification."""
-        pass
-    
-    def display_users(self, users: List[str]):
-        """TODO: Display list of users."""
-        pass
-    
-    def display_rooms(self, rooms: List[Dict[str, Any]]):
-        """TODO: Display list of rooms."""
-        pass
-    
-    def display_status(self, message: str):
-        """TODO: Display status message."""
-        pass
-    
-    def display_connection_status(self, connected: bool):
-        """TODO: Display connection status."""
-        pass
-    
-    def get_command(self) -> str:
-        """TODO: Get command from user."""
-        pass
-    
-    def get_password(self, prompt: str = "Password: ") -> str:
-        """TODO: Get password (hidden input)."""
-        pass
-    
-    def get_input(self, prompt: str) -> str:
-        """TODO: Get general input."""
-        pass
-    
-    def parse_command(self, command: str) -> Dict[str, Any]:
-        """TODO: Parse command into action and arguments."""
-        pass
-    
-    def execute_command(self, command: Dict[str, Any]) -> bool:
-        """TODO: Execute parsed command."""
-        pass
-    
-    def on_message_received(self, sender: str, content: str):
-        """TODO: Handle incoming message notification."""
-        pass
-    
-    def on_room_message(self, room: str, sender: str, content: str):
-        """TODO: Handle incoming room message."""
-        pass
-    
-    def on_user_online(self, username: str):
-        """TODO: Handle user came online notification."""
-        pass
-    
-    def on_user_offline(self, username: str):
-        """TODO: Handle user went offline notification."""
-        pass
-    
-    def on_room_joined(self, room_name: str, members: List[str]):
-        """TODO: Handle room joined notification."""
-        pass
-    
-    def on_room_left(self, room_name: str):
-        """TODO: Handle room left notification."""
-        pass
-    
-    def on_error(self, error_message: str):
-        """TODO: Handle error from server."""
-        pass
-    
-    def on_success(self, message: str):
-        """TODO: Handle success from server."""
-        pass
-    
-    def on_auth_success(self):
-        """TODO: Handle successful authentication."""
-        pass
-    
-    def on_disconnected(self):
-        """TODO: Handle disconnection."""
-        pass
-    
-    def run(self):
-        """TODO: Main CLI loop."""
-        pass
+def run_cli(self):
+        print("\n=== BEM-VINDO AO SECURE P2P CHAT ===")
+        print("Comandos disponíveis:")
+        print("  /register <user> <pass>  - Criar nova conta")
+        print("  /login <user> <pass>     - Entrar na conta")
+        print("  /chat <user> <msg>       - Enviar mensagem (P2P)")
+        print("  /list                    - Ver quem está online")
+        print("  /exit                    - Sair do programa")
+        print("===================================\n")
+
+        while self.running:
+            raw_input = input(f"[{self.username or 'Anonimo'}] > ").strip()
+            if not raw_input: continue
+            
+            parts = raw_input.split(" ", 2)
+            cmd = parts[0].lower()
+
+            # --- REGISTAR ---
+            if cmd == "/register" and len(parts) == 3:
+                user, pwd = parts[1], parts[2]
+                pub_key_b64 = self.session_manager.load_or_generate_identity_keys()
+                # Cria a mensagem com o formato que a Pessoa 1 pediu no servidor
+                msg = Message(MessageType.REGISTER.value, user, {
+                    "username": user,
+                    "password": pwd,  # Idealmente devia ser o hash da password
+                    "public_key": pub_key_b64
+                })
+                self._send_packet(self.server_socket, msg)
+                print("[*] Pedido de registo enviado...")
+
+            # --- LOGIN ---
+            elif cmd == "/login" and len(parts) == 3:
+                if self.username:
+                    print("[!] Já tens sessão iniciada!")
+                else:
+                    self.login(parts[1], parts[2])
+                    print("[*] A tentar iniciar sessão...")
+
+            # --- CHAT P2P ---
+            elif cmd == "/chat" and len(parts) > 2:
+                if not self.username:
+                    print("[!] Precisas de fazer /login primeiro.")
+                    continue
+                
+                target, text = parts[1], parts[2]
+                
+                if target in self.peer_sessions:
+                    payload = self.session_manager.encrypt_for_peer(target, text)
+                    if payload:
+                        msg = Message(MessageType.P2P_MSG.value, self.username, payload)
+                        self._send_packet(self.peer_sessions[target]["socket"], msg)
+                else:
+                    self.pending_chats[target] = text 
+                    print(f"[*] A procurar {target}...")
+                    req = Message(MessageType.GET_IP.value, self.username, {"target_user": target})
+                    self._send_packet(self.server_socket, req)
+
+            # --- LISTAR ONLINE ---
+            elif cmd == "/list":
+                if not self.username:
+                    print("[!] Precisas de fazer /login primeiro.")
+                else:
+                    req = Message(MessageType.GET_USERS.value, self.username, {})
+                    self._send_packet(self.server_socket, req)
+            
+            # --- SAIR ---
+            elif cmd == "/exit":
+                # Avisa o servidor que vais sair
+                if self.username:
+                    msg = Message(MessageType.DISCONNECT.value, self.username, {})
+                    self._send_packet(self.server_socket, msg)
+                self.stop()
+            
+            else:
+                print("[!] Comando inválido ou formato incorreto.")
