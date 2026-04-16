@@ -97,23 +97,38 @@ class Storage:
         return [{"username": row[0]} for row in cursor.fetchall()]
 
     # OFFLINE MESSAGE FUNCTIONS
-    def store_offline_message(self, recipient: str, sender: str, encrypted_content: bytes,
-                               nonce: Optional[bytes] = None, tag: Optional[bytes] = None) -> int:
-        # Guarda mensagem offline
+    def store_offline_message(self, recipient: str, sender: str, content: bytes,
+                          nonce: Optional[bytes] = None, tag: Optional[bytes] = None) -> int:
+        """
+        Guarda mensagem offline (já preparada pelo client).
+        """
         cursor = self.conn.execute(
             "INSERT INTO offline_messages (recipient, sender, encrypted_content, nonce, tag) VALUES (?, ?, ?, ?, ?)",
-            (recipient, sender, encrypted_content, nonce, tag)
+            (recipient, sender, content, nonce, tag)
         )
         self.conn.commit()
         return cursor.lastrowid
 
     def get_offline_messages(self, recipient: str) -> List[Dict[str, Any]]:
-        # Retorna mensagens offline de um destinatário
+        """
+        Retorna mensagens offline prontas para enviar ao client.
+        """
         cursor = self.conn.execute(
-            "SELECT id, recipient, sender, encrypted_content, nonce, tag FROM offline_messages WHERE recipient = ?",
+            "SELECT id, sender, encrypted_content, nonce, tag FROM offline_messages WHERE recipient = ?",
             (recipient,)
         )
-        return [dict(row) for row in cursor.fetchall()]
+
+        messages = []
+        for row in cursor.fetchall():
+            messages.append({
+                "id": row["id"],
+                "sender": row["sender"],
+                "content": row["encrypted_content"],
+                "nonce": row["nonce"],
+                "tag": row["tag"]
+            })
+
+        return messages
 
     def delete_offline_message(self, message_id: int) -> bool:
         # Apaga uma mensagem offline

@@ -36,6 +36,7 @@ class MessageType(Enum):
     # Grupos e Offline
     ROOM_ACTION = "room_action"
     OFFLINE_STORE = "off_store"
+    OFFLINE_MESSAGES = "offline_messages"
 
 @dataclass
 class Message:

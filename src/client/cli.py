@@ -69,7 +69,7 @@ def run_cli(self):
             elif cmd == "/list":
                 if not self.username:
                     print("[!] Precisas de fazer /login primeiro.")
-                else:
+                else:   
                     req = Message(MessageType.GET_USERS.value, self.username, {})
                     self._send_packet(self.server_socket, req)
             

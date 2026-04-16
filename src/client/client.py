@@ -182,32 +182,58 @@ class ChatClient:
                 
                 if status == "success":
                     print(f"\n[Servidor] SUCESSO: {texto}")
-                    # MUDANÇA 1: O print da porta só aparece no Login OK
+                    
                     if "Login OK" in texto:
                         print(f"[*] Listening para P2P na porta {self.p2p_port}")
                         self.username = msg.payload.get("username")
                         self.session_manager.set_username(self.username)
                         
+                        # 👇 NOVO: pedir mensagens offline ao fazer login
+                        req = Message(MessageType.OFFLINE_STORE.value, self.username, {
+                            "action": "get"
+                        })
+                        self._send_packet(self.server_socket, req)
+                        
                 elif status == "error":
                     print(f"\n[Servidor] ERRO: {texto}")
                     
-            elif msg.msg_type == MessageType.IP_RESPONSE.value: # MUDANÇA 2: Usei 'elif' para ser mais eficiente
+            elif msg.msg_type == MessageType.IP_RESPONSE.value:
                 dest_user = msg.payload.get('target_user')
                 ip = msg.payload.get('ip')
                 port = msg.payload.get('port')
                 
                 if ip:
                     print(f"[*] {dest_user} encontrado em {ip}:{port}. A conectar...")
-                    # Apenas ligamos. O envio da mensagem pendente saltou para o handshake.
                     self.connect_to_peer(dest_user, ip, port)
                 else:
-                    print(f"[!] {dest_user} está offline.")
-                    self.pending_chats.pop(dest_user, None)
+                    print(f"[!] {dest_user} está offline. A guardar mensagem no servidor...")
+
+                    # 👇 NOVO: enviar mensagem offline para o servidor
+                    if dest_user in self.pending_chats:
+                        content = self.pending_chats.pop(dest_user)
+
+                        msg_off = Message(MessageType.OFFLINE_STORE.value, self.username, {
+                            "action": "store", # <--- Faltava isto para o servidor entrar no IF correto
+                            "recipient": dest_user,
+                            "content": content,
+                            "nonce": None, # Ou os dados de cifragem se já os tiveres
+                              "tag": None
+                        })
+                        self._send_packet(self.server_socket, msg_off)
 
             elif msg.msg_type == MessageType.USERS_LIST.value:
                 print(f"[*] Utilizadores Online: {msg.payload.get('users')}")
 
-    def run_cli(self):
+            # 👇 NOVO: receber mensagens offline do servidor
+            elif msg.msg_type == "offline_messages":
+                mensagens = msg.payload.get("messages", [])
+                
+                for m in mensagens:
+                    sender = m.get("sender")
+                    content = m.get("content")
+                    print(f"\n[OFFLINE][{sender}]: {content}")
+
+    """def run_cli(self):
         print("--- Secure P2P Chat ---")
         while self.running:
             raw_input = input("> ").strip()
@@ -247,7 +273,7 @@ class ChatClient:
                 if cmd == "/chat":
                     print("Uso: /chat <username> <mensagem>")
                 else:
-                    print(f"Comando desconhecido: {cmd}")
+                    print(f"Comando desconhecido: {cmd}")"""
 
     def stop(self):
         self.running = False
@@ -306,7 +332,9 @@ class ChatClient:
                             msg = Message(MessageType.P2P_MSG.value, self.username, payload)
                             self._send_packet(self.peer_sessions[target]["socket"], msg)
                     else:
+                        # 👇 guardar sempre para possível envio offline
                         self.pending_chats[target] = text 
+                        
                         print(f"[*] A procurar {target}...")
                         req = Message(MessageType.GET_IP.value, self.username, {"target_user": target})
                         self._send_packet(self.server_socket, req)

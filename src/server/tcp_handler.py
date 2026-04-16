@@ -5,10 +5,13 @@ routing de comandos e geração de respostas tipadas.
 """
 
 import json
+import logging
+import base64
 from typing import Optional, Dict, Any, Tuple
 
 from protocol.messages import Message, MessageType
 
+logger = logging.getLogger(__name__)
 
 class ClientHandler:
     """Gere a comunicação com um único cliente TCP."""
@@ -144,7 +147,71 @@ class ClientHandler:
             users = await self.server.online_users.list_online_users()
             return self._build_response(MessageType.USERS_LIST, "server", {"users": users}), None, False
 
-        # 5. DESCONECTAR
+
+        # 5. OFFLINE STORE (guardar ou pedir mensagens)
+        if cmd == MessageType.OFFLINE_STORE.value:
+            action = data.get("action")
+
+            # 📥 PEDIR MENSAGENS OFFLINE (O cliente acabou de fazer login)
+            if action == "get":
+                # Procura mensagens na DB onde o destinatário é o atual 'sender'
+                mensagens = self.server.storage.get_offline_messages(sender)
+
+                for m in mensagens:
+                    # Converter bytes para string Base64 para o JSON não crashar
+                    if isinstance(m["content"], bytes):
+                        m["content"] = base64.b64encode(m["content"]).decode('utf-8')
+                    if isinstance(m["nonce"], bytes):
+                        m["nonce"] = base64.b64encode(m["nonce"]).decode('utf-8')
+                    if isinstance(m["tag"], bytes):
+                        m["tag"] = base64.b64encode(m["tag"]).decode('utf-8')
+
+                return Message(
+                    msg_type="offline_messages",
+                    sender="server",
+                    payload={"messages": mensagens}
+                ), None, False
+
+            # 📤 GUARDAR MENSAGEM OFFLINE (O destinatário estava offline)
+            elif action == "store":
+                recipient = data.get("recipient")
+                content = data.get("content") # String Base64 vinda do JSON
+                nonce = data.get("nonce")
+                tag = data.get("tag")
+
+                # Validação básica de integridade
+                if not recipient or not content:
+                    return self._build_response(
+                        MessageType.RESPONSE, 
+                        "server", 
+                        {"status": "error", "message": "Dados insuficientes para guardar offline"}
+                    ), None, False
+
+                # Guardamos como bytes na DB (o SQLite trata o BLOB automaticamente)
+                # Fazemos o .encode() apenas se for string, para evitar erros caso já venha em bytes
+                self.server.storage.store_offline_message(
+                    recipient,
+                    sender,
+                    content.encode() if isinstance(content, str) else content,
+                    nonce.encode() if nonce and isinstance(nonce, str) else nonce,
+                    tag.encode() if tag and isinstance(tag, str) else tag
+                )
+
+                return self._build_response(
+                    MessageType.RESPONSE,
+                    "server",
+                    {"status": "success", "message": "Mensagem guardada offline com sucesso"}
+                ), None, False
+
+            else:
+                return self._build_response(
+                    MessageType.RESPONSE, 
+                    "server", 
+                    {"status": "error", "message": "Ação offline desconhecida"}
+                ), None, False
+
+
+        # 6. DESCONECTAR
         if cmd == MessageType.DISCONNECT.value:
             return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Desconectado"}), None, True
 
