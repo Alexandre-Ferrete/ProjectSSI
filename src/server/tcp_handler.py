@@ -127,9 +127,6 @@ class ClientHandler:
 
         # 3. OBTER IP (Para P2P)
         if cmd == MessageType.GET_IP.value:
-            if not self.username:
-                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Não autenticado"}), None, False
-
             target_user = data.get("target_user")
             address = await self.server.online_users.get_user_address(target_user)
             
@@ -137,7 +134,20 @@ class ClientHandler:
                 ip, port = address
                 return self._build_response(MessageType.IP_RESPONSE, "server", {"target_user": target_user, "ip": ip, "port": port, "status": "success"}), None, False
 
-            return self._build_response(MessageType.IP_RESPONSE, "server", {"target_user": target_user, "ip": None, "port": None, "status": "offline"}), None, False
+            # --- ALTERAÇÃO AQUI ---
+            # Se o user está offline, vamos buscar a chave pública dele à DB para o remetente poder cifrar offline
+            user_data = self.server.storage.get_user(target_user)
+            pub_key = None
+            if user_data:
+                pub_key = user_data.get("public_key") # Já deve estar em Base64 ou bytes
+
+            return self._build_response(MessageType.IP_RESPONSE, "server", {
+                "target_user": target_user, 
+                "ip": None, 
+                "port": None, 
+                "status": "offline",
+                "public_key": pub_key # <--- Enviar isto!
+            }), None, False
 
         # 4. LISTAR UTILIZADORES
         if cmd == MessageType.GET_USERS.value:
@@ -154,23 +164,39 @@ class ClientHandler:
 
             # 📥 PEDIR MENSAGENS OFFLINE (O cliente acabou de fazer login)
             if action == "get":
-                # Procura mensagens na DB onde o destinatário é o atual 'sender'
-                mensagens = self.server.storage.get_offline_messages(sender)
+                mensagens_db = self.server.storage.get_offline_messages(sender)
+                mensagens_para_enviar = []
 
-                for m in mensagens:
-                    # Converter bytes para string Base64 para o JSON não crashar
-                    if isinstance(m["content"], bytes):
-                        m["content"] = base64.b64encode(m["content"]).decode('utf-8')
-                    if isinstance(m["nonce"], bytes):
-                        m["nonce"] = base64.b64encode(m["nonce"]).decode('utf-8')
-                    if isinstance(m["tag"], bytes):
-                        m["tag"] = base64.b64encode(m["tag"]).decode('utf-8')
+                for m in mensagens_db:
+                    # Função auxiliar interna para evitar o Double Base64
+                    def ensure_str(data):
+                        if data is None: 
+                            return ""
+                        if isinstance(data, bytes):
+                            try:
+                                # Tenta ver se já é uma string Base64 guardada como bytes
+                                return data.decode('utf-8')
+                            except UnicodeDecodeError:
+                                # Se falhar, é porque são bytes binários reais, aí sim fazemos encode
+                                return base64.b64encode(data).decode('utf-8')
+                        return str(data)
+
+                    payload_msg = {
+                        "sender": m["sender"],
+                        "content": ensure_str(m["content"]),
+                        "nonce": ensure_str(m["nonce"]),
+                        "tag": ensure_str(m["tag"])
+                    }
+                    mensagens_para_enviar.append(payload_msg)
+
+                # Opcional: Limpar as mensagens da DB para não as receberes sempre que fazes login
+                self.server.storage.clear_offline_messages(sender)
 
                 return Message(
                     msg_type="offline_messages",
                     sender="server",
-                    payload={"messages": mensagens}
-                ), None, False
+                    payload={"messages": mensagens_para_enviar}
+                ), None, False              
 
             # 📤 GUARDAR MENSAGEM OFFLINE (O destinatário estava offline)
             elif action == "store":

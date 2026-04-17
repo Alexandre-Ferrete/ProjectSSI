@@ -211,13 +211,15 @@ class ChatClient:
                     # 👇 NOVO: enviar mensagem offline para o servidor
                     if dest_user in self.pending_chats:
                         content = self.pending_chats.pop(dest_user)
+                        pub_key = msg.payload.get("public_key")
+                        encrypted_data = self.session_manager.encrypt_offline(pub_key, content)
 
                         msg_off = Message(MessageType.OFFLINE_STORE.value, self.username, {
-                            "action": "store", # <--- Faltava isto para o servidor entrar no IF correto
+                            "action": "store",
                             "recipient": dest_user,
-                            "content": content,
-                            "nonce": None, # Ou os dados de cifragem se já os tiveres
-                              "tag": None
+                            "content": encrypted_data["content"],
+                            "nonce": encrypted_data["nonce"],
+                            "tag": encrypted_data["tag"]
                         })
                         self._send_packet(self.server_socket, msg_off)
 
@@ -228,52 +230,19 @@ class ChatClient:
             elif msg.msg_type == "offline_messages":
                 mensagens = msg.payload.get("messages", [])
                 
+                if not mensagens:
+                    print("\n[*] Não tens mensagens offline pendentes.")
+                
                 for m in mensagens:
                     sender = m.get("sender")
-                    content = m.get("content")
-                    print(f"\n[OFFLINE][{sender}]: {content}")
+                    # Passamos o dicionário 'm' inteiro porque o decrypt_offline 
+                    # precisa do content, nonce e tag
+                    try:
+                        texto_limpo = self.session_manager.decrypt_offline(m)
+                        print(f"\n[OFFLINE][{sender}]: {texto_limpo}")
+                    except Exception as e:
+                        print(f"\n[OFFLINE][{sender}]: (Erro ao desencriptar: {e})")
 
-    """def run_cli(self):
-        print("--- Secure P2P Chat ---")
-        while self.running:
-            raw_input = input("> ").strip()
-            if not raw_input: continue
-            
-            parts = raw_input.split(" ", 2)
-            cmd = parts[0]
-
-            # 1. COMANDO DE CHAT
-            if cmd == "/chat" and len(parts) > 2:
-                target, text = parts[1], parts[2]
-                
-                if target in self.peer_sessions:
-                    encrypted_payload = self.session_manager.encrypt_for_peer(target, text)
-                    if encrypted_payload:
-                        msg = Message(MessageType.P2P_MSG.value, self.username, encrypted_payload)
-                        self._send_packet(self.peer_sessions[target]["socket"], msg)
-                    else:
-                        print(f"[!] Erro: Sessão com {target} não está pronta.")
-                else:
-                    # Se não temos conexão, pedimos o IP ao servidor
-                    self.pending_chats[target] = text 
-                    print(f"[*] A pedir localização de {target}...")
-                    req = Message(MessageType.GET_IP.value, self.username, {"target_user": target})
-                    self._send_packet(self.server_socket, req)
-
-            # 2. COMANDO DE LISTAR UTILIZADORES (Agora fora do IF do chat)
-            elif cmd == "/list":
-                req = Message(MessageType.GET_USERS.value, self.username, {})
-                self._send_packet(self.server_socket, req)
-            
-            # 3. COMANDO PARA SAIR (Bom para a Pessoa 2 implementar)
-            elif cmd == "/exit":
-                self.stop()
-            
-            else:
-                if cmd == "/chat":
-                    print("Uso: /chat <username> <mensagem>")
-                else:
-                    print(f"Comando desconhecido: {cmd}")"""
 
     def stop(self):
         self.running = False

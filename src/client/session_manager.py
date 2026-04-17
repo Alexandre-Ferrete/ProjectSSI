@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import utils.helpers as help
 from typing import Optional, Dict, Any, Tuple
 
 # NOTA: Importar as funções da Pessoa 3 aqui
@@ -163,3 +164,28 @@ class SessionManager:
         
         # (Simulação temporária - remove a string "ENC(" e ")")
         return ciphertext.decode('utf-8').replace("ENC(", "").replace(")", "")
+    
+    def encrypt_offline(self, recipient_pub_key_b64: str, text: str) -> Dict[str, str]:
+        """Cifra uma mensagem para um utilizador offline usando a chave pública dele."""
+        # 1. Em produção, aqui usarias RSA para cifrar uma chave AES
+        # 2. Para o teu teste agora, vamos simular que ciframos com a chave pública
+        ciphertext = f"OFFLINE_ENC({text})".encode('utf-8')
+        return {
+            "content": help.encode_base64(ciphertext),
+            "nonce": help.encode_base64(b"static_nonce"),
+            "tag": help.encode_base64(b"static_tag")
+            }
+
+    def decrypt_offline(self, encrypted_payload: dict) -> str:
+        """Usa a nossa chave privada de identidade para abrir a mensagem."""
+        content_b64 = encrypted_payload.get("content")
+        
+        # 1. Decodificar de Base64 para bytes
+        raw_bytes = help.decode_base64(content_b64) 
+        
+        # 2. Converter bytes para string (decodificando em UTF-8)
+        # O erro acontece porque raw_bytes é 'bytes' e não 'str'
+        raw_str = raw_bytes.decode('utf-8')
+        
+        # 3. Agora sim, podemos usar os métodos de string
+        return raw_str.replace("OFFLINE_ENC(", "").replace(")", "")
