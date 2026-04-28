@@ -28,7 +28,7 @@ def run_cli(self):
             # --- REGISTAR ---
             if cmd == "/register" and len(parts) == 3:
                 user, pwd = parts[1], parts[2]
-                pub_key_b64 = self.session_manager.load_or_generate_identity_keys()
+                pub_key_b64 = self.session_manager.load_or_generate_identity_keys(parts[2])
                 # Cria a mensagem com o formato que a Pessoa 1 pediu no servidor
                 msg = Message(MessageType.REGISTER.value, user, {
                     "username": user,

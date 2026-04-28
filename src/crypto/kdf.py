@@ -87,5 +87,5 @@ def derive_key_PBKDF2HMAC(password):
         salt=rand,
         iterations=100000
     )
-    password_kdf = kdf.derive(password)
+    password_kdf = kdf.derive(password.encode("utf-8"))
     return password_kdf, rand

@@ -54,48 +54,70 @@ class SessionManager:
     # 1. CHAVES DE IDENTIDADE (Para o Servidor)
     # ==========================================
 
-    def load_or_generate_identity_keys(self, password_kdf:str) -> str:
-        """
-        Carrega as chaves do disco. Se não existirem, pede à Pessoa 3 para gerar.
-        Retorna a chave pública em Base64 para enviar no REGISTER/AUTH.
-        """
-        if password_kdf: 
-            encrypt_algorithm=serialization.BestAvailableEncryption(password_kdf)
-        else:
-            print ("erro em password_kdf")
-            return
+    def load_or_generate_identity_keys(self, password_kdf: bytes, user: str) -> str:
+            """
+            Carrega as chaves de identidade do disco. Se não existirem,
+            gera um novo par Ed25519.
 
-        priv_path = os.path.join(self.data_dir, f"{self.username}_priv.pem")
-        pub_path = os.path.join(self.data_dir, f"{self.username}_pub.pem")
-        
-        if os.path.exists(priv_path) and os.path.exists(pub_path):
-    
-            self.identity_priv_key = serialization.load_pem_private_key(
-                open(priv_path, "rb").read(), 
-                password=password_kdf.encode('utf-8')
-            )
-            
-        else:
-            # CHAMAR PESSOA 3: Gerar par de chaves Ed25519 
-            
-            
-            priv_key, pub_key = generate_keypair_Ed25519()
-            # IK privada
-            self.identity_priv_key = priv_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=encrypt_algorithm
-            )
+            Args:
+            password_kdf: Chave derivada (bytes) usada para cifrar a chave privada.
+            user: O nome de utilizador.
 
-            # IK pública
-            self.identity_pub_key = pub_key.public_bytes(
+            Returns:
+            A chave pública em PEM, codificada em Base64.
+            """
+            self.set_username(user)
+
+            if not self.username:
+                raise ValueError("Username não pode ser vazio")
+
+            if not password_kdf:
+                raise ValueError("password_kdf não pode ser vazio")
+
+            priv_path = os.path.join(self.data_dir, f"{self.username}_priv.pem")
+            pub_path = os.path.join(self.data_dir, f"{self.username}_pub.pem")
+
+            if os.path.exists(priv_path) and os.path.exists(pub_path):
+                with open(priv_path, "rb") as f:
+                    self.identity_priv_key = serialization.load_pem_private_key(
+                        f.read(),
+                        password=password_kdf
+                    )
+
+                with open(pub_path, "rb") as f:
+                    self.identity_pub_key = serialization.load_pem_public_key(
+                        f.read()
+                    )
+            else:
+                priv_key, pub_key = generate_keypair_Ed25519()
+
+                self.identity_priv_key = priv_key
+                self.identity_pub_key = pub_key
+
+                priv_pem = priv_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.BestAvailableEncryption(password_kdf)
+                )
+
+                pub_pem = pub_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                )
+
+                with open(priv_path, "wb") as f:
+                    f.write(priv_pem)
+
+                with open(pub_path, "wb") as f:
+                    f.write(pub_pem)
+
+            pub_pem = self.identity_pub_key.public_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
-            with open(priv_path, "wb") as f: f.write(self.identity_priv_key)
-            with open(pub_path, "wb") as f: f.write(self.identity_pub_key)
-            
-        return base64.b64encode(self.identity_pub_key).decode('utf-8')
+
+            return base64.b64encode(pub_pem).decode("utf-8")
+
 
     # ==========================================
     # 2. HANDSHAKE P2P (Diffie-Hellman)
