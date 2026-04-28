@@ -4,7 +4,9 @@ HKDF - Key Derivation Function
 HMAC-based Key Derivation Function (HKDF) for deriving keys from shared secrets.
 """
 
+import os
 from typing import Optional
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF as HKDFPrimitive
 from cryptography.hazmat.primitives import hashes
 
@@ -76,3 +78,14 @@ def derive_key(
     """
     hkdf = HKDF(hash_algorithm)
     return hkdf.derive_key(input_key_material, length, context)
+
+def derive_key_PBKDF2HMAC(password):
+    rand = os.urandom(16)
+    kdf = PBKDF2HMAC (
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=rand,
+        iterations=100000
+    )
+    password_kdf = kdf.derive(password)
+    return password_kdf, rand

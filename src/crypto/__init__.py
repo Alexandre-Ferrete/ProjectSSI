@@ -3,7 +3,7 @@ from .symmetric import generate_key, encrypt, decrypt
 from .hybrid import encrypt, decrypt, encrypt_ecdh, decrypt_ecdh
 from .kdf import HKDF, derive_key as kdf_derive_key
 from .asymmetric import generate_keypair as rsa_generate_keypair, encrypt as rsa_encrypt, decrypt as rsa_decrypt
-from .signatures import sign, verify
+from .signatures import sign, verify, generate_keypair_Ed25519
 from .certificates import (
     generate_ca_certificate,
     generate_user_certificate,
@@ -30,6 +30,7 @@ __all__ = [
     "rsa_decrypt",
     "sign",
     "verify",
+    "generate_keypair_Ed25519"
     "generate_ca_certificate",
     "generate_user_certificate",
     "load_certificate",

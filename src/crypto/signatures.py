@@ -14,6 +14,11 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding, ec, rsa, ed25519
 from cryptography.exceptions import InvalidSignature
 
+
+def generate_keypair_Ed25519():
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    return private_key, private_key.public_key() 
+
 def sign(private_key_pem: bytes, message: bytes) -> bytes:
     """
     Sign a message with RSA/ECC/Ed25519 private key.

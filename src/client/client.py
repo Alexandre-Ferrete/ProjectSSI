@@ -3,6 +3,8 @@ import threading
 import struct
 import json
 import time
+from crypto.signatures import generate_keypair_Ed25519
+from crypto.kdf import derive_key_PBKDF2HMAC
 from typing import Optional, Dict
 from protocol.messages import Message, MessageType
 from client.session_manager import SessionManager
@@ -185,6 +187,8 @@ class ChatClient:
                     
                     if "Login OK" in texto:
                         print(f"[*] Listening para P2P na porta {self.p2p_port}")
+                        salt = msg.payload.get("salt")
+                        self.session_manager.set_salt(salt)
                         self.username = msg.payload.get("username")
                         self.session_manager.set_username(self.username)
                         
@@ -268,14 +272,17 @@ class ChatClient:
 
                 # --- REGISTAR ---
                 if cmd == "/register" and len(parts) == 3:
-                    user, pwd = parts[1], parts[2]
-                    pub_key_b64 = self.session_manager.load_or_generate_identity_keys()
+                    user = parts[1]
+                    pwd_kdf, salt = derive_key_PBKDF2HMAC(parts[2])
+                    pub_key_b64 = self.session_manager.load_or_generate_identity_keys(pwd_kdf)
                     # Cria a mensagem com o formato que a Pessoa 1 pediu no servidor
-                    msg = Message(MessageType.REGISTER.value, user, {
+                    msg = Message (MessageType.REGISTER.value, user, {
                         "username": user,
-                        "password": pwd,  # Idealmente devia ser o hash da password
-                        "public_key": pub_key_b64
-                    })
+                        "password": pwd_kdf, 
+                        "public_key": pub_key_b64,
+                        "salt": salt,
+                        }
+                    )
                     self._send_packet(self.server_socket, msg)
                     print("[*] Pedido de registo enviado...")
 
@@ -284,7 +291,9 @@ class ChatClient:
                     if self.username:
                         print("[!] Já tens sessão iniciada!")
                     else:
-                        self.login(parts[1], parts[2])
+                        user, pwd = parts[1], parts[2]
+                        self.session_manager.load_or_generate_identity_keys(password_kdf=pwd)
+                        self.login(user, pwd)
                         print("[*] A tentar iniciar sessão...")
 
                 # --- CHAT P2P ---
@@ -328,8 +337,13 @@ class ChatClient:
                     print("[!] Comando inválido ou formato incorreto.")
 
 if __name__ == "__main__":
-    client = ChatClient()
+    print("\n=== CONFIGURAÇÃO DO SERVIDOR ===")
+    server_host = input("Endereço IP do servidor [localhost]: ").strip() or "localhost"
+    server_port = 5555
+
+    print(f"[*] A conectar a {server_host}:{server_port}...")
+    client = ChatClient(server_host=server_host, server_port=server_port)
     if client.connect():
-        # Exemplo rápido: o login deveria vir de um input
+
         client.run_cli()
         

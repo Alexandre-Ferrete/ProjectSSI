@@ -3,6 +3,8 @@ import json
 import base64
 import utils.helpers as help
 from typing import Optional, Dict, Any, Tuple
+from crypto import generate_keypair_Ed25519
+from cryptography.hazmat.primitives import serialization
 
 # NOTA: Importar as funções da Pessoa 3 aqui
 # from crypto.rsa import generate_rsa_keypair
@@ -19,7 +21,7 @@ class SessionManager:
         self.username = username
         self.data_dir = data_dir
         
-        # Chaves de Identidade (Longo prazo - RSA/Ed25519)
+        # Chaves de Identidade (Longo prazo - Ed25519)
         self.identity_priv_key: Optional[bytes] = None
         self.identity_pub_key: Optional[bytes] = None
         
@@ -40,6 +42,9 @@ class SessionManager:
         self._ensure_dir()
         print(f"[*] SessionManager configurado para: {username}")
 
+    def set_salt(self, salt: str):
+        self.salt = salt
+
     def _ensure_dir(self):
         """Garante que a pasta para guardar as chaves existe."""
         if not os.path.exists(self.data_dir):
@@ -49,24 +54,44 @@ class SessionManager:
     # 1. CHAVES DE IDENTIDADE (Para o Servidor)
     # ==========================================
 
-    def load_or_generate_identity_keys(self) -> str:
+    def load_or_generate_identity_keys(self, password_kdf:str) -> str:
         """
         Carrega as chaves do disco. Se não existirem, pede à Pessoa 3 para gerar.
         Retorna a chave pública em Base64 para enviar no REGISTER/AUTH.
         """
+        if password_kdf: 
+            encrypt_algorithm=serialization.BestAvailableEncryption(password_kdf)
+        else:
+            print ("erro em password_kdf")
+            return
+
         priv_path = os.path.join(self.data_dir, f"{self.username}_priv.pem")
         pub_path = os.path.join(self.data_dir, f"{self.username}_pub.pem")
         
         if os.path.exists(priv_path) and os.path.exists(pub_path):
-            with open(priv_path, "rb") as f: self.identity_priv_key = f.read()
-            with open(pub_path, "rb") as f: self.identity_pub_key = f.read()
+    
+            self.identity_priv_key = serialization.load_pem_private_key(
+                open(priv_path, "rb").read(), 
+                password=password_kdf.encode('utf-8')
+            )
+            
         else:
-            # CHAMAR PESSOA 3: Gerar par de chaves RSA
-            # self.identity_priv_key, self.identity_pub_key = generate_rsa_keypair()
+            # CHAMAR PESSOA 3: Gerar par de chaves Ed25519 
             
-            # (Simulação temporária)
-            self.identity_priv_key, self.identity_pub_key = b"priv", b"pub_key_base64"
             
+            priv_key, pub_key = generate_keypair_Ed25519()
+            # IK privada
+            self.identity_priv_key = priv_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=encrypt_algorithm
+            )
+
+            # IK pública
+            self.identity_pub_key = pub_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
             with open(priv_path, "wb") as f: f.write(self.identity_priv_key)
             with open(pub_path, "wb") as f: f.write(self.identity_pub_key)
             
@@ -75,7 +100,6 @@ class SessionManager:
     # ==========================================
     # 2. HANDSHAKE P2P (Diffie-Hellman)
     # ==========================================
-
     def get_handshake_data(self, peer_username: str) -> str:
         """
         Gera uma chave efémera para iniciar conversa com um peer.
