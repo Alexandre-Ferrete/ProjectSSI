@@ -1,10 +1,12 @@
 import asyncio
 import logging
 import signal
+import os
 
 from .storage import Storage
 from .user_manager import OnlineUserManager
 from .tcp_handler import ClientHandler
+from .server_keys_generator import generate_server_keys, load_server_pubkey, load_server_privkey
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -18,7 +20,24 @@ class ChatServer:
         self.server = None
 
     async def start(self):
+
+        # Para simplificar, a password do servidor é hardcoded. Em produção, isto deveria ser mais seguro.
+        # Criação ou carregamento das chaves do servidor (CA) - Protegidas por password
+        password = input("Defina a password para o servidor: ")
+        if password != "server":
+            print("[!] Password incorreta. Encerrando.")
+            return
         """Inicializa storage e arranca o servidor."""
+        if os.path.exists("ca_identity.key") and os.path.exists("ca_public.key"):
+            logger.info("[*] Chaves do servidor já existem. A carregar...")
+            self.ca_priv_key = load_server_privkey(password)
+            self.ca_pub_key = load_server_pubkey()
+        else:
+            logger.info("[*] Chaves do servidor não encontradas. A gerar novas chaves...")
+            generate_server_keys(password)
+            self.ca_priv_key = load_server_privkey(password)
+            self.ca_pub_key = load_server_pubkey()
+
         self.storage.initialize()
         self.server = await asyncio.start_server(self.handle_client, self.host, self.port)
         
