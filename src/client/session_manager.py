@@ -73,9 +73,11 @@ class SessionManager:
 
             if not password_kdf:
                 raise ValueError("password_kdf não pode ser vazio")
-
+            
+            
             priv_path = os.path.join(self.data_dir, f"{self.username}_priv.pem")
             pub_path = os.path.join(self.data_dir, f"{self.username}_pub.pem")
+
 
             if os.path.exists(priv_path) and os.path.exists(pub_path):
                 with open(priv_path, "rb") as f:

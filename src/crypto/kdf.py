@@ -79,13 +79,14 @@ def derive_key(
     hkdf = HKDF(hash_algorithm)
     return hkdf.derive_key(input_key_material, length, context)
 
-def derive_key_PBKDF2HMAC(password):
-    rand = os.urandom(16)
+def derive_key_PBKDF2HMAC(password, salt):
+    if not salt:
+        salt = os.urandom(16)
     kdf = PBKDF2HMAC (
         algorithm=hashes.SHA256(),
         length=32,
-        salt=rand,
+        salt=salt,
         iterations=100000
     )
     password_kdf = kdf.derive(password.encode("utf-8"))
-    return password_kdf, rand
+    return password_kdf, salt

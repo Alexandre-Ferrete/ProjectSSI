@@ -7,6 +7,7 @@ routing de comandos e geração de respostas tipadas.
 import json
 import logging
 import base64
+import os
 from typing import Optional, Dict, Any, Tuple
 
 from protocol.messages import Message, MessageType
@@ -79,7 +80,6 @@ class ClientHandler:
         cmd = (request.get("type") or "").lower()
         data = request.get("data", {}) or {}
         sender = request.get("sender") or self.username or "server"
-
         # 1. REGISTO
         if cmd == MessageType.REGISTER.value:
             username = data.get("username") or sender
@@ -123,7 +123,10 @@ class ClientHandler:
 
             # Se passou as verificações, adiciona aos online
             await self.server.online_users.add_online_user(username, self.address[0], p2p_port, self.writer)
-            return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Login OK", "username": username}), username, False
+            nonce = base64.b64encode(os.urandom(16)).decode('utf-8')
+            self.nonce = nonce
+            return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Login OK", "username": username, "nonce": nonce}), username, False
+            
 
         # 3. OBTER IP (Para P2P)
         if cmd == MessageType.GET_IP.value:
@@ -158,12 +161,17 @@ class ClientHandler:
             return self._build_response(MessageType.USERS_LIST, "server", {"users": users}), None, False
 
 
-        # 5. OFFLINE STORE (guardar ou pedir mensagens)
+        # 5. OFFLINE STORE (guardar ou pedir mensagens) e receber nonce
         if cmd == MessageType.OFFLINE_STORE.value:
             action = data.get("action")
+            nonce_encrypted = data.get("nonce_encrypted")
 
-            # 📥 PEDIR MENSAGENS OFFLINE (O cliente acabou de fazer login)
+            # 📥 PEDIR MENSAGENS OFFLINE (O cliente acabou de fazer login) e verificar nonce
             if action == "get":
+                user = self.server.storage.get_offline_messages(sender)
+                Iden_pub_key = user.get("public_key")
+                nonce_decrypted = Iden_pub_key.verify(nonce_encrypted, self.nonce)
+
                 mensagens_db = self.server.storage.get_offline_messages(sender)
                 mensagens_para_enviar = []
 

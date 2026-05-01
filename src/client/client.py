@@ -1,4 +1,5 @@
 import base64
+import os
 import socket
 import threading
 import struct
@@ -9,6 +10,8 @@ from crypto.kdf import derive_key_PBKDF2HMAC
 from typing import Optional, Dict
 from protocol.messages import Message, MessageType
 from client.session_manager import SessionManager
+from cryptography.hazmat.primitives import serialization
+
 
 # Nota: importar as funções da Pessoa 3 aqui quando estiverem prontas
 # from crypto.hybrid import encrypt_content, decrypt_content
@@ -17,6 +20,8 @@ class ChatClient:
     def __init__(self, server_host: str = 'localhost', server_port: int = 5555, username: str = None):
         self.server_addr = (server_host, server_port)
         self.server_socket = None
+
+        self.iden_kdf = None
 
         self.session_manager = SessionManager(username=username)
         
@@ -183,6 +188,7 @@ class ChatClient:
                 status = msg.payload.get("status")
                 texto = msg.payload.get("message")
                 
+                
                 if status == "success":
                     print(f"\n[Servidor] SUCESSO: {texto}")
                     
@@ -192,12 +198,25 @@ class ChatClient:
                         self.session_manager.set_salt(salt)
                         self.username = msg.payload.get("username")
                         self.session_manager.set_username(self.username)
-                        
+                        nonce = msg.payload.get("nonce")
+
+                        if not self.iden_kdf:
+                            print("PWD_KDF erro")
+
+                        with open("alice_priv.pem", "rb") as f:
+                            private_key = serialization.load_pem_private_key(
+                                f.read(),
+                                password=self.iden_kdf
+                            )
+                        nonce_enc = private_key.sign(nonce)
                         # 👇 NOVO: pedir mensagens offline ao fazer login
-                        req = Message(MessageType.OFFLINE_STORE.value, self.username, {
-                            "action": "get"
-                        })
+                        req = Message(MessageType.OFFLINE_STORE.value, self.username,{
+                            "action": "get",
+                            "nonce_encrypted" : nonce_enc
+                            }
+                        )
                         self._send_packet(self.server_socket, req)
+                        
                         
                 elif status == "error":
                     print(f"\n[Servidor] ERRO: {texto}")
@@ -274,8 +293,13 @@ class ChatClient:
                 # --- REGISTAR ---
                 if cmd == "/register" and len(parts) == 3:
                     user, pwd = parts[1], parts[2]
-                    pwd_kdf, salt = derive_key_PBKDF2HMAC(pwd)
+                    pwd_kdf, salt = derive_key_PBKDF2HMAC(pwd,None)
+                    self.iden_kdf = pwd_kdf
                     pub_key_b64 = self.session_manager.load_or_generate_identity_keys(pwd_kdf, user)
+
+                    salt_path = os.path.join(self.session_manager.data_dir, f"{user}.salt")
+                    with open (salt_path, "wb") as f:
+                        f.write(salt)
                     # Cria a mensagem com o formato que a Pessoa 1 pediu no servidor
                     msg = Message (MessageType.REGISTER.value, user, {
                         "username": user,
@@ -293,10 +317,26 @@ class ChatClient:
                         print("[!] Já tens sessão iniciada!")
                     else:
                         user, pwd = parts[1], parts[2]
-                        pwd_kdf, salt = derive_key_PBKDF2HMAC(pwd)
-                        self.session_manager.load_or_generate_identity_keys(password_kdf=pwd_kdf, user=user)
-                        self.login(user, pwd)
-                        print("[*] A tentar iniciar sessão...")
+                        
+                        salt_path = os.path.join(self.session_manager.data_dir, f"{user}.salt")
+                        if not os.path.exists(self.session_manager.data_dir):
+                            print(f"[!]ERRO: Salt não encontrado para {user}. Registaste-te nesta máquina?")
+                            continue
+                            #FALTA PEDIR O SALT AO SERVER
+                    
+                        with open(salt_path, "rb") as f:
+                            ident_salt = f.read()
+
+                        pwd_kdf, _ = derive_key_PBKDF2HMAC(pwd,salt=ident_salt)
+                        
+                        success = self.session_manager.load_or_generate_identity_keys(user=user, password_kdf=pwd_kdf)
+
+                        if success:
+                            self.login(user, base64.b64encode(pwd_kdf).decode('utf-8'))
+                            print(f"[*] Bem-vindo {user}! A autenticar com o servidor...")
+                        else:
+                            print("[!] Falha no login: Password incorreta ou chaves corrompidas.")
+
 
                 # --- CHAT P2P ---
                 elif cmd == "/chat" and len(parts) > 2:

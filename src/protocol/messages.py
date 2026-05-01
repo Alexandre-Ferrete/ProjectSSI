@@ -23,7 +23,6 @@ class MessageType(Enum):
     GET_IP = "get_ip"
     GET_USERS = "get_users"      
     DISCONNECT = "disconnect"
-    
     # Respostas do Servidor
     RESPONSE = "response"         # Sucesso/Erro genérico
     IP_RESPONSE = "ip_response"   # Contém IP e Porta do alvo
