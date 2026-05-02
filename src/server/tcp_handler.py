@@ -8,9 +8,15 @@ import json
 import logging
 import base64
 import os
+import datetime
 from typing import Optional, Dict, Any, Tuple
 
 from protocol.messages import Message, MessageType
+
+from cryptography.hazmat.primitives.serialization import load_pem_public_key, serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography import x509
+from cryptography.x509.oid import NameOID
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +80,74 @@ class ClientHandler:
     def _build_response(self, msg_type: MessageType, sender: str, payload: Dict[str, Any]) -> Message:
         return Message(msg_type=msg_type.value, sender=sender, payload=payload)
 
+    def _ensure_bytes(self, data) -> bytes:
+        """Ensure data is bytes (decode base64 or encode string)."""
+        if not data:
+            return b""
+        if isinstance(data, bytes):
+            return data
+        if isinstance(data, str):
+            if data.startswith("-----BEGIN"):
+                return data.encode("utf-8")
+            try:
+                return base64.b64decode(data)
+            except Exception:
+                return data.encode("utf-8")
+        return b""
+
+    def _is_ed25519_key(self, key_data: bytes) -> bool:
+        """Validate that key_data is an Ed25519 public key."""
+        try:
+            key = load_pem_public_key(key_data)
+            return isinstance(key, Ed25519PublicKey)
+        except Exception:
+            return False
+
+    def _is_ed25519_certificate(self, cert_data: bytes) -> bool:
+        """Validate that cert_data is an Ed25519 X.509 certificate."""
+        try:
+            cert = x509.load_pem_x509_certificate(cert_data)
+            return isinstance(cert.public_key(), Ed25519PublicKey)
+        except Exception:
+            return False
+
+    def _validate_certificate(self, cert_data: bytes, public_key_data: bytes) -> bool:
+        """
+        Validate certificate:
+        1. Is Ed25519 certificate
+        2. Public key matches
+        3. Not expired
+        """
+        try:
+            cert = x509.load_pem_x509_certificate(cert_data)
+            public_key = load_pem_public_key(public_key_data)
+
+            # Check certificate uses Ed25519
+            if not isinstance(cert.public_key(), Ed25519PublicKey):
+                return False
+
+            # Check public key matches
+            cert_pub_bytes = cert.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw
+            )
+            pub_bytes = public_key.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw
+            )
+            if cert_pub_bytes != pub_bytes:
+                return False
+
+            # Check not expired
+            now = datetime.utcnow()
+            if now < cert.not_valid_before or now > cert.not_valid_after:
+                return False
+
+            return True
+        except Exception as e:
+            logger.error(f"Certificate validation error: {e}")
+            return False
+
     async def process_command(self, request: Dict[str, Any]):
         """Executa a lógica de cada comando suportado pelo protocolo."""
         # O _parse_request já normalizou os campos para "type" e "data"
@@ -93,6 +167,33 @@ class ClientHandler:
             # Verifica se o utilizador já existe na DB
             if self.server.storage.get_user(username):
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Utilizador já existe"}), None, False
+
+            # Validate public key is Ed25519
+            if public_key:
+                logger.info(f"[*] A validar chave pública para {username}")
+                public_key_bytes = self._ensure_bytes(public_key)
+                if not self._is_ed25519_key(public_key_bytes):
+                    logger.error(f"[!] Chave pública inválida para {username}")
+                    return self._build_response(
+                        MessageType.RESPONSE, "server",
+                        {"status": "error", "message": "Chave pública deve ser Ed25519"}
+                    ), None, False
+                logger.info(f"[*] Chave pública válida (Ed25519) para {username}")
+
+            # Validate certificate if provided
+            if certificate and public_key:
+                logger.info(f"[*] A validar certificado para {username}")
+                cert_bytes = self._ensure_bytes(certificate)
+                pub_bytes = self._ensure_bytes(public_key)
+                if not self._validate_certificate(cert_bytes, pub_bytes):
+                    logger.error(f"[!] Certificado inválido para {username}")
+                    return self._build_response(
+                        MessageType.RESPONSE, "server",
+                        {"status": "error", "message": "Certificado inválido ou não corresponde à chave pública"}
+                    ), None, False
+                logger.info(f"[*] Certificado válido para {username}")
+
+            logger.info(f"[*] A criar utilizador: {username}")
 
             created = self.server.storage.create_user(username, password, public_key, certificate)
             if not created:

@@ -293,9 +293,15 @@ class ChatClient:
                 # --- REGISTAR ---
                 if cmd == "/register" and len(parts) == 3:
                     user, pwd = parts[1], parts[2]
+                    print(f"[*] A registar utilizador: {user}")
+                    
                     pwd_kdf, salt = derive_key_PBKDF2HMAC(pwd,None)
                     self.iden_kdf = pwd_kdf
                     pub_key_b64 = self.session_manager.load_or_generate_identity_keys(pwd_kdf, user)
+                    print(f"[*] Chave pública gerada: {pub_key_b64[:50]}...")
+                    
+                    cert_b64 = self.session_manager.get_certificate()
+                    print(f"[*] Certificado gerado: {len(cert_b64)} bytes (Base64)")
 
                     salt_path = os.path.join(self.session_manager.data_dir, f"{user}.salt")
                     with open (salt_path, "wb") as f:
@@ -305,11 +311,12 @@ class ChatClient:
                         "username": user,
                         "password": base64.b64encode(pwd_kdf).decode('utf-8'),
                         "public_key": pub_key_b64,
+                        "certificate": cert_b64,
                         "salt": base64.b64encode(salt).decode('utf-8'),
                         }
                     )
                     self._send_packet(self.server_socket, msg)
-                    print("[*] Pedido de registo enviado...")
+                    print("[*] Pedido de registo enviado ao servidor!")
 
                 # --- LOGIN ---
                 elif cmd == "/login" and len(parts) == 3:

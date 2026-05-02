@@ -3,8 +3,11 @@ import json
 import base64
 import utils.helpers as help
 from typing import Optional, Dict, Any, Tuple
+from datetime import datetime, timedelta
 from crypto import generate_keypair_Ed25519
 from cryptography.hazmat.primitives import serialization
+from cryptography import x509
+from cryptography.x509.oid import NameOID
 
 # NOTA: Importar as funções da Pessoa 3 aqui
 # from crypto.rsa import generate_rsa_keypair
@@ -67,6 +70,7 @@ class SessionManager:
             A chave pública em PEM, codificada em Base64.
             """
             self.set_username(user)
+            print(f"[*] SessionManager: A carregar chaves para {user}...")
 
             if not self.username:
                 raise ValueError("Username não pode ser vazio")
@@ -77,9 +81,11 @@ class SessionManager:
             
             priv_path = os.path.join(self.data_dir, f"{self.username}_priv.pem")
             pub_path = os.path.join(self.data_dir, f"{self.username}_pub.pem")
+            cert_path = os.path.join(self.data_dir, f"{self.username}_cert.pem")
 
 
             if os.path.exists(priv_path) and os.path.exists(pub_path):
+                print("[*] A carregar chaves do disco...")
                 with open(priv_path, "rb") as f:
                     self.identity_priv_key = serialization.load_pem_private_key(
                         f.read(),
@@ -90,7 +96,20 @@ class SessionManager:
                     self.identity_pub_key = serialization.load_pem_public_key(
                         f.read()
                     )
+                
+                # Load existing certificate if exists
+                if os.path.exists(cert_path):
+                    print("[*] A carregar certificado existente...")
+                    with open(cert_path, "rb") as f:
+                        self.identity_cert = f.read()
+                else:
+                    print("[!] Certificado não encontrado. A gerar novo...")
+                    self.identity_cert = self._generate_self_signed_cert(user, self.identity_pub_key.public_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PublicFormat.SubjectPublicKeyInfo
+                    ))
             else:
+                print("[*] A gerar novo par de chaves Ed25519...")
                 priv_key, pub_key = generate_keypair_Ed25519()
 
                 self.identity_priv_key = priv_key
@@ -107,18 +126,86 @@ class SessionManager:
                     format=serialization.PublicFormat.SubjectPublicKeyInfo
                 )
 
+                print("[*] A guardar chaves no disco...")
                 with open(priv_path, "wb") as f:
                     f.write(priv_pem)
 
                 with open(pub_path, "wb") as f:
                     f.write(pub_pem)
 
+                # Generate self-signed certificate
+                print("[*] A gerar certificado X.509...")
+                self.identity_cert = self._generate_self_signed_cert(user, pub_pem)
+
             pub_pem = self.identity_pub_key.public_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
 
+            # Generate self-signed X.509 certificate
+            self.identity_cert = self._generate_self_signed_cert(user, pub_pem)
+
             return base64.b64encode(pub_pem).decode("utf-8")
+
+    def _generate_self_signed_cert(self, username: str, public_key_pem: bytes) -> bytes:
+        """
+        Generate a self-signed X.509 certificate using Ed25519 key.
+        
+        Args:
+            username: The username (used as CN)
+            public_key_pem: The public key in PEM format
+            
+        Returns:
+            Certificate in PEM format (bytes)
+        """
+        public_key = serialization.load_pem_public_key(public_key_pem)
+        
+        subject = issuer = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, username)
+        ])
+        
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(public_key)
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.utcnow())
+            .not_valid_after(datetime.utcnow() + timedelta(days=365))
+            .add_extension(
+                x509.BasicConstraints(ca=False, path_length=None), critical=True
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    key_encipherment=True,
+                    key_cert_sign=False,
+                    crl_sign=False,
+                    content_commitment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    encipher_only=False,
+                    decipher_only=False
+                ), critical=True
+            )
+            .sign(self.identity_priv_key)  # Ed25519 uses algorithm=None
+        )
+        
+        # Save certificate to disk
+        cert_path = os.path.join(self.data_dir, f"{username}_cert.pem")
+        cert_pem = cert.public_bytes(serialization.Encoding.PEM)
+        with open(cert_path, "wb") as f:
+            f.write(cert_pem)
+        
+        self.identity_cert = cert_pem
+        return cert_pem
+
+    def get_certificate(self) -> str:
+        """Return the certificate encoded in Base64."""
+        if not self.identity_cert:
+            raise ValueError("Certificate not generated. Call load_or_generate_identity_keys first.")
+        print(f"[*] Certificate carregada, tamanho: {len(self.identity_cert)} bytes")
+        return base64.b64encode(self.identity_cert).decode("utf-8")
 
 
     # ==========================================
