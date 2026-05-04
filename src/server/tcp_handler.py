@@ -8,12 +8,13 @@ import json
 import logging
 import base64
 import os
-import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 
 from protocol.messages import Message, MessageType
 
-from cryptography.hazmat.primitives.serialization import load_pem_public_key, serialization
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -124,23 +125,28 @@ class ClientHandler:
 
             # Check certificate uses Ed25519
             if not isinstance(cert.public_key(), Ed25519PublicKey):
+                logger.error("Certificado não usa Ed25519")
                 return False
 
-            # Check public key matches
-            cert_pub_bytes = cert.public_key().public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
+            # Check public key matches (compare PEM format)
+            cert_pub_pem = cert.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
-            pub_bytes = public_key.public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
+            pub_pem = public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
-            if cert_pub_bytes != pub_bytes:
+            if cert_pub_pem != pub_pem:
+                logger.error("Chave pública não corresponde ao certificado")
                 return False
 
             # Check not expired
-            now = datetime.utcnow()
-            if now < cert.not_valid_before or now > cert.not_valid_after:
+            now = datetime.now(timezone.utc)
+            cert_not_before = cert.not_valid_before.replace(tzinfo=timezone.utc) if cert.not_valid_before.tzinfo is None else cert.not_valid_before
+            cert_not_after = cert.not_valid_after.replace(tzinfo=timezone.utc) if cert.not_valid_after.tzinfo is None else cert.not_valid_after
+            if now < cert_not_before or now > cert_not_after:
+                logger.error("Certificado expirado")
                 return False
 
             return True
@@ -269,9 +275,34 @@ class ClientHandler:
 
             # 📥 PEDIR MENSAGENS OFFLINE (O cliente acabou de fazer login) e verificar nonce
             if action == "get":
-                user = self.server.storage.get_offline_messages(sender)
-                Iden_pub_key = user.get("public_key")
-                nonce_decrypted = Iden_pub_key.verify(nonce_encrypted, self.nonce)
+                # Get user's public key to verify nonce
+                user_data = self.server.storage.get_user(sender)
+                if not user_data:
+                    return self._build_response(
+                        MessageType.RESPONSE, "server",
+                        {"status": "error", "message": "Utilizador não encontrado"}
+                    ), None, False
+                
+                pub_key_data = user_data.get("public_key")
+                if not pub_key_data:
+                    return self._build_response(
+                        MessageType.RESPONSE, "server",
+                        {"status": "error", "message": "Chave pública não encontrada"}
+                    ), None, False
+                
+                # Verify nonce signature
+                pub_key = load_pem_public_key(self._ensure_bytes(pub_key_data))
+                try:
+                    pub_key.verify(
+                        base64.b64decode(nonce_encrypted),
+                        self.nonce.encode('utf-8')
+                    )
+                except Exception as e:
+                    logger.error(f"Nonce verification failed: {e}")
+                    return self._build_response(
+                        MessageType.RESPONSE, "server",
+                        {"status": "error", "message": "Nonce inválido"}
+                    ), None, False
 
                 mensagens_db = self.server.storage.get_offline_messages(sender)
                 mensagens_para_enviar = []

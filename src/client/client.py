@@ -190,7 +190,7 @@ class ChatClient:
                 
                 
                 if status == "success":
-                    print(f"\n[Servidor] SUCESSO: {texto}")
+                    print(f"\n[*] SUCESSO: {texto}")
                     
                     if "Login OK" in texto:
                         print(f"[*] Listening para P2P na porta {self.p2p_port}")
@@ -200,26 +200,22 @@ class ChatClient:
                         self.session_manager.set_username(self.username)
                         nonce = msg.payload.get("nonce")
 
-                        if not self.iden_kdf:
-                            print("PWD_KDF erro")
-
-                        with open("alice_priv.pem", "rb") as f:
-                            private_key = serialization.load_pem_private_key(
-                                f.read(),
-                                password=self.iden_kdf
-                            )
-                        nonce_enc = private_key.sign(nonce)
+                        # Load private key temporarily, sign, then discard
+                        nonce_enc = self.session_manager.sign_with_identity_key(
+                            nonce.encode('utf-8')
+                        )
+                        
                         # 👇 NOVO: pedir mensagens offline ao fazer login
                         req = Message(MessageType.OFFLINE_STORE.value, self.username,{
                             "action": "get",
-                            "nonce_encrypted" : nonce_enc
+                            "nonce_encrypted" : base64.b64encode(nonce_enc).decode('utf-8')
                             }
                         )
                         self._send_packet(self.server_socket, req)
                         
                         
                 elif status == "error":
-                    print(f"\n[Servidor] ERRO: {texto}")
+                    print(f"\n[*] ERRO: {texto}")
                     
             elif msg.msg_type == MessageType.IP_RESPONSE.value:
                 dest_user = msg.payload.get('target_user')
@@ -339,6 +335,7 @@ class ChatClient:
                         success = self.session_manager.load_or_generate_identity_keys(user=user, password_kdf=pwd_kdf)
 
                         if success:
+                            self.session_manager.set_password(pwd)  # Guardar temporariamente
                             self.login(user, base64.b64encode(pwd_kdf).decode('utf-8'))
                             print(f"[*] Bem-vindo {user}! A autenticar com o servidor...")
                         else:

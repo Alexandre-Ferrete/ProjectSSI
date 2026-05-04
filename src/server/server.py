@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 import os
+import sys
 
 from .storage import Storage
 from .user_manager import OnlineUserManager
@@ -26,7 +27,7 @@ class ChatServer:
         password = input("Defina a password para o servidor: ")
         if password != "server":
             print("[!] Password incorreta. Encerrando.")
-            return
+            sys.exit(1)
         """Inicializa storage e arranca o servidor."""
         if os.path.exists("ca_identity.key") and os.path.exists("ca_public.key"):
             logger.info("[*] Chaves do servidor já existem. A carregar...")
