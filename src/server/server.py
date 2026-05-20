@@ -9,7 +9,18 @@ from .user_manager import OnlineUserManager
 from .tcp_handler import ClientHandler
 from .server_keys_generator import generate_server_keys, load_server_pubkey, load_server_privkey
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, "server.log")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 class ChatServer:
@@ -19,25 +30,26 @@ class ChatServer:
         self.storage = Storage()
         self.online_users = OnlineUserManager()
         self.server = None
+        self.keys_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     async def start(self):
-
-        # Para simplificar, a password do servidor é hardcoded. Em produção, isto deveria ser mais seguro.
-        # Criação ou carregamento das chaves do servidor (CA) - Protegidas por password
-        password = input("Defina a password para o servidor: ")
+        import os
+        password = os.environ.get("SERVER_PASSWORD") or input("Defina a password para o servidor: ")
         if password != "server":
             print("[!] Password incorreta. Encerrando.")
             sys.exit(1)
         """Inicializa storage e arranca o servidor."""
-        if os.path.exists("ca_identity.key") and os.path.exists("ca_public.key"):
+        ca_identity = os.path.join(self.keys_dir, "ca_identity.key")
+        ca_public = os.path.join(self.keys_dir, "ca_public.key")
+        if os.path.exists(ca_identity) and os.path.exists(ca_public):
             logger.info("[*] Chaves do servidor já existem. A carregar...")
-            self.ca_priv_key = load_server_privkey(password)
-            self.ca_pub_key = load_server_pubkey()
+            self.ca_priv_key = load_server_privkey(ca_identity, password)
+            self.ca_pub_key = load_server_pubkey(ca_public)
         else:
             logger.info("[*] Chaves do servidor não encontradas. A gerar novas chaves...")
-            generate_server_keys(password)
-            self.ca_priv_key = load_server_privkey(password)
-            self.ca_pub_key = load_server_pubkey()
+            generate_server_keys(password, ca_identity, ca_public)
+            self.ca_priv_key = load_server_privkey(ca_identity, password)
+            self.ca_pub_key = load_server_pubkey(ca_public)
 
         self.storage.initialize()
         self.server = await asyncio.start_server(self.handle_client, self.host, self.port)
@@ -60,10 +72,8 @@ class ChatServer:
         logger.info("[*] A encerrar servidor...")
         if self.server:
             self.server.close()
-            # Aguarda que todas as conexões existentes terminem ou fechem
             await self.server.wait_closed()
         
-        # Só fecha a storage depois de garantir que nenhum handler a está a usar
         self.storage.close()
         logger.info("[*] Recursos libertados.")
 
@@ -73,16 +83,15 @@ async def main():
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
-    # Configura sinais de paragem
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, stop_event.set)
         except NotImplementedError:
-            pass # Para compatibilidade com Windows
+            pass
 
     server_task = asyncio.create_task(server.start())
     
-    await stop_event.wait() # Fica aqui até alguém fazer Ctrl+C
+    await stop_event.wait()
     
     await server.shutdown()
     server_task.cancel()

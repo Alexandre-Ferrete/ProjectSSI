@@ -14,25 +14,65 @@ class Storage:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
+        self._migrate()
+
+    def _migrate(self):
+        try:
+            self.conn.execute("ALTER TABLE offline_messages ADD COLUMN device_id INTEGER")
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            self.conn.execute("SELECT id FROM user_devices WHERE username = 'test'")
+        except sqlite3.OperationalError:
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_devices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    public_key BLOB NOT NULL,
+                    certificate BLOB NOT NULL,
+                    salt BLOB NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (username) REFERENCES users(username),
+                    UNIQUE(username, public_key)
+                )
+            """)
+            self.conn.commit()
 
     def _create_tables(self):
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 username TEXT PRIMARY KEY,
-                password_hash TEXT NOT NULL,
-                public_key BLOB,
-                certificate BLOB
+                password_hash TEXT NOT NULL
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                public_key BLOB NOT NULL,
+                certificate BLOB NOT NULL,
+                salt BLOB NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (username) REFERENCES users(username),
+                UNIQUE(username, public_key)
             )
         """)
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS offline_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id INTEGER,
                 recipient TEXT NOT NULL,
                 sender TEXT NOT NULL,
                 encrypted_content BLOB NOT NULL,
                 nonce BLOB,
-                tag BLOB
+                tag BLOB,
+                FOREIGN KEY (device_id) REFERENCES user_devices(id)
             )
         """)
 
@@ -61,10 +101,20 @@ class Storage:
             self.conn.close()
 
     # USER FUNCTIONS
+    def create_user(self, username: str, password_hash: str) -> bool:
+        try:
+            self.conn.execute(
+                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                (username, password_hash)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
     def get_user(self, username: str) -> Optional[Dict[str, Any]]:
-        # Retorna utilizador pelo username
         cursor = self.conn.execute(
-            "SELECT username, password_hash, public_key, certificate FROM users WHERE username = ?",
+            "SELECT username, password_hash FROM users WHERE username = ?",
             (username,)
         )
         row = cursor.fetchone()
@@ -72,24 +122,93 @@ class Storage:
             return dict(row)
         return None
 
-    def create_user(self, username: str, password_hash: str, public_key: Optional[bytes] = None,
-                    certificate: Optional[bytes] = None) -> bool:
-        # Cria novo utilizador
+    def get_user_with_devices(self, username: str) -> Optional[Dict[str, Any]]:
+        cursor = self.conn.execute(
+            "SELECT username, password_hash FROM users WHERE username = ?",
+            (username,)
+        )
+        row = cursor.fetchone()
+        if row:
+            user = dict(row)
+            user["devices"] = self.get_devices(username)
+            return user
+        return None
+
+    # DEVICE FUNCTIONS
+    def add_device(self, username: str, public_key: bytes, certificate: bytes, salt: bytes) -> bool:
         try:
             self.conn.execute(
-                "INSERT INTO users (username, password_hash, public_key, certificate) VALUES (?, ?, ?, ?)",
-                (username, password_hash, public_key, certificate)
+                "INSERT INTO user_devices (username, public_key, certificate, salt) VALUES (?, ?, ?, ?)",
+                (username, public_key, certificate, salt)
             )
             self.conn.commit()
             return True
         except sqlite3.IntegrityError:
             return False
 
+    def get_devices(self, username: str) -> List[Dict[str, Any]]:
+        cursor = self.conn.execute(
+            "SELECT id, public_key, certificate, salt, created_at, last_login FROM user_devices WHERE username = ?",
+            (username,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_device(self, username: str, public_key: bytes) -> Optional[Dict[str, Any]]:
+        cursor = self.conn.execute(
+            "SELECT id, public_key, certificate, salt, created_at, last_login FROM user_devices WHERE username = ? AND public_key = ?",
+            (username, public_key)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def get_device_by_id(self, device_id: int) -> Optional[Dict[str, Any]]:
+        cursor = self.conn.execute(
+            "SELECT id, username, public_key, certificate, salt, created_at, last_login FROM user_devices WHERE id = ?",
+            (device_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def update_last_login(self, device_id: int):
+        self.conn.execute(
+            "UPDATE user_devices SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
+            (device_id,)
+        )
+        self.conn.commit()
+
+    def delete_device(self, device_id: int) -> bool:
+        cursor = self.conn.execute("DELETE FROM user_devices WHERE id = ?", (device_id,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def get_public_keys(self, username: str) -> List[bytes]:
+        cursor = self.conn.execute(
+            "SELECT public_key FROM user_devices WHERE username = ?",
+            (username,)
+        )
+        return [row[0] for row in cursor.fetchall()]
+
     def delete_user(self, username: str) -> bool:
-        # Apaga utilizador
+        self.conn.execute("DELETE FROM offline_messages WHERE recipient = ?", (username,))
+        self.conn.execute("DELETE FROM offline_messages WHERE sender = ?", (username,))
+        self.conn.execute("DELETE FROM room_members WHERE username = ?", (username,))
+        self.conn.execute("DELETE FROM user_devices WHERE username = ?", (username,))
         cursor = self.conn.execute("DELETE FROM users WHERE username = ?", (username,))
         self.conn.commit()
         return cursor.rowcount > 0
+
+    def purge_all(self) -> bool:
+        self.conn.execute("DELETE FROM offline_messages")
+        self.conn.execute("DELETE FROM room_members")
+        self.conn.execute("DELETE FROM rooms")
+        self.conn.execute("DELETE FROM user_devices")
+        self.conn.execute("DELETE FROM users")
+        self.conn.commit()
+        return True
 
     def list_users(self) -> List[Dict[str, Any]]:
         # Lista todos os utilizadores
@@ -98,30 +217,51 @@ class Storage:
 
     # OFFLINE MESSAGE FUNCTIONS
     def store_offline_message(self, recipient: str, sender: str, content: bytes,
-                          nonce: Optional[bytes] = None, tag: Optional[bytes] = None) -> int:
-        """
-        Guarda mensagem offline (já preparada pelo client).
-        """
+                          nonce: Optional[bytes] = None, tag: Optional[bytes] = None,
+                          device_id: Optional[int] = None) -> int:
         cursor = self.conn.execute(
-            "INSERT INTO offline_messages (recipient, sender, encrypted_content, nonce, tag) VALUES (?, ?, ?, ?, ?)",
-            (recipient, sender, content, nonce, tag)
+            "INSERT INTO offline_messages (device_id, recipient, sender, encrypted_content, nonce, tag) VALUES (?, ?, ?, ?, ?, ?)",
+            (device_id, recipient, sender, content, nonce, tag)
         )
         self.conn.commit()
         return cursor.lastrowid
 
-    def get_offline_messages(self, recipient: str) -> List[Dict[str, Any]]:
-        """
-        Retorna mensagens offline prontas para enviar ao client.
-        """
+    def get_offline_messages(self, recipient: str, device_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        if device_id:
+            cursor = self.conn.execute(
+                "SELECT id, device_id, sender, encrypted_content, nonce, tag FROM offline_messages WHERE recipient = ? AND device_id = ?",
+                (recipient, device_id)
+            )
+        else:
+            cursor = self.conn.execute(
+                "SELECT id, device_id, sender, encrypted_content, nonce, tag FROM offline_messages WHERE recipient = ?",
+                (recipient,)
+            )
+
+        messages = []
+        for row in cursor.fetchall():
+            messages.append({
+                "id": row["id"],
+                "device_id": row["device_id"],
+                "sender": row["sender"],
+                "content": row["encrypted_content"],
+                "nonce": row["nonce"],
+                "tag": row["tag"]
+            })
+
+        return messages
+
+    def get_offline_messages_by_device(self, device_id: int) -> List[Dict[str, Any]]:
         cursor = self.conn.execute(
-            "SELECT id, sender, encrypted_content, nonce, tag FROM offline_messages WHERE recipient = ?",
-            (recipient,)
+            "SELECT id, device_id, sender, encrypted_content, nonce, tag FROM offline_messages WHERE device_id = ?",
+            (device_id,)
         )
 
         messages = []
         for row in cursor.fetchall():
             messages.append({
                 "id": row["id"],
+                "device_id": row["device_id"],
                 "sender": row["sender"],
                 "content": row["encrypted_content"],
                 "nonce": row["nonce"],
@@ -136,9 +276,16 @@ class Storage:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def clear_offline_messages(self, recipient: str) -> int:
-        # Apaga todas as mensagens offline de um utilizador
-        cursor = self.conn.execute("DELETE FROM offline_messages WHERE recipient = ?", (recipient,))
+    def clear_offline_messages(self, recipient: str, device_id: Optional[int] = None) -> int:
+        if device_id:
+            cursor = self.conn.execute("DELETE FROM offline_messages WHERE recipient = ? AND device_id = ?", (recipient, device_id))
+        else:
+            cursor = self.conn.execute("DELETE FROM offline_messages WHERE recipient = ?", (recipient,))
+        self.conn.commit()
+        return cursor.rowcount
+
+    def clear_offline_messages_by_device(self, device_id: int) -> int:
+        cursor = self.conn.execute("DELETE FROM offline_messages WHERE device_id = ?", (device_id,))
         self.conn.commit()
         return cursor.rowcount
 
@@ -195,7 +342,6 @@ class Storage:
         return cursor.rowcount > 0
 
     def get_room_members(self, room_name: str) -> List[str]:
-        # Retorna membros de uma sala
         cursor = self.conn.execute(
             "SELECT username FROM room_members WHERE room_name = ?",
             (room_name,)

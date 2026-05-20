@@ -1,0 +1,27 @@
+2026-05-09 08:33:37,427 - INFO - [*] Chaves do servidor já existem. A carregar...
+2026-05-09 08:33:37,532 - INFO - [*] Servidor à escuta em ('0.0.0.0', 5555)
+2026-05-09 08:33:48,462 - INFO - [+] Nova conexão: ('127.0.0.1', 54442)
+2026-05-09 08:34:03,284 - INFO - [+] Nova conexão: ('127.0.0.1', 52640)
+2026-05-09 08:42:56,559 - INFO - [*] A encerrar servidor...
+2026-05-09 08:42:56,560 - INFO - [*] Recursos libertados.
+2026-05-09 08:43:01,466 - INFO - [*] Chaves do servidor já existem. A carregar...
+2026-05-09 08:43:01,514 - INFO - [*] Servidor à escuta em ('0.0.0.0', 5555)
+2026-05-09 08:43:05,652 - INFO - [+] Nova conexão: ('127.0.0.1', 56962)
+2026-05-09 08:43:17,805 - INFO - [+] Nova conexão: ('127.0.0.1', 57654)
+2026-05-18 14:06:32,027 - INFO - [*] Chaves do servidor já existem. A carregar...
+2026-05-18 14:06:32,086 - INFO - [*] Servidor à escuta em ('0.0.0.0', 5555)
+2026-05-18 14:07:24,003 - INFO - [+] Nova conexão: ('127.0.0.1', 38440)
+2026-05-18 14:07:55,305 - INFO - [*] A validar chave pública para jonas
+2026-05-18 14:07:55,309 - INFO - [*] A validar certificado para jonas
+2026-05-18 14:08:57,430 - INFO - [+] Nova conexão: ('127.0.0.1', 41608)
+2026-05-18 14:09:10,228 - INFO - [*] A validar chave pública para pistolas
+2026-05-18 14:09:10,232 - INFO - [*] A validar certificado para pistolas
+2026-05-18 14:10:43,666 - INFO - [*] A encerrar servidor...
+2026-05-18 14:11:12,312 - INFO - [*] Chaves do servidor já existem. A carregar...
+2026-05-18 14:11:12,357 - INFO - [*] Servidor à escuta em ('0.0.0.0', 5555)
+2026-05-18 14:12:48,774 - INFO - [+] Nova conexão: ('127.0.0.1', 43438)
+2026-05-18 14:52:13,837 - INFO - [+] Nova conexão: ('127.0.0.1', 57156)
+2026-05-18 14:52:46,633 - INFO - [+] Nova conexão: ('127.0.0.1', 37702)
+2026-05-18 14:53:29,136 - INFO - [+] Nova conexão: ('127.0.0.1', 45028)
+2026-05-18 14:53:43,477 - INFO - [+] Nova conexão: ('127.0.0.1', 46026)
+2026-05-18 14:54:02,326 - INFO - [*] A encerrar servidor...

@@ -11,15 +11,15 @@ TODO:
 import cryptography
 from typing import Tuple
 from cryptography.hazmat.primitives.asymmetric import ec,x25519
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 # Curve selection
-# TODO: Choose curve (secp256r1/P-256 recommended)
-# ECDH_CURVE = "secp256r1"
+# ECDH_CURVE = "x25519"
 
 
 
 
-def generate_keypair(curve: str = "secp256r1") -> Tuple[bytes, bytes]:
+def generate_keypair() -> Tuple[bytes, bytes]:
     """
     TODO: Generate ECDH keypair.
     
@@ -34,16 +34,8 @@ def generate_keypair(curve: str = "secp256r1") -> Tuple[bytes, bytes]:
     - Generate private key on selected curve
     - Serialize public key to PEM/compressed format
     """
-    curve = curve.lower()
 
-    if curve == "secp256r1":
-        private_key = ec.generate_private_key(ec.SECP256R1())
-    elif curve == "secp384r1":
-        private_key = ec.generate_private_key(ec.SECP384R1())
-    elif curve == "x25519":
-        private_key = x25519.X25519PrivateKey.generate()
-    else:
-        raise ValueError(f"Unsupported curve: {curve}")
+    private_key = x25519.X25519PrivateKey.generate()
     
     public_key = private_key.public_key()
 
@@ -53,18 +45,8 @@ def generate_keypair(curve: str = "secp256r1") -> Tuple[bytes, bytes]:
         encryption_algorithm=serialization.NoEncryption()
     )
 
-    if curve == "x25519":
-        # X25519 usa formato raw (mais comum)
-        public_bytes = public_key.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw
-        )
-    else:
-        # EC padrão → PEM (SubjectPublicKeyInfo)
-        public_bytes = public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
+    # X25519 usa formato raw (mais comum)
+    public_bytes = public_key.public_bytes_raw()
 
     return private_bytes, public_bytes
 
@@ -72,7 +54,6 @@ def generate_keypair(curve: str = "secp256r1") -> Tuple[bytes, bytes]:
 def perform_exchange(
     private_key_pem: bytes,
     peer_public_key_pem: bytes,
-    curve: str = "secp256r1"
 ) -> bytes:
     """
     TODO: Perform ECDH key exchange.
@@ -80,7 +61,6 @@ def perform_exchange(
     Args:
         private_key_pem: Our private key
         peer_public_key_pem: Peer's public key
-        curve: Elliptic curve
         
     Returns:
         Shared secret (raw)
@@ -90,7 +70,6 @@ def perform_exchange(
     - Perform ECDH agreement
     - Return raw shared secret
     """
-    curve = curve.lower()
 
     # Carregar chave privada
     private_key = serialization.load_pem_private_key(
@@ -98,26 +77,15 @@ def perform_exchange(
         password=None
     )
 
-    # Carregar chave pública do peer
-    if curve == "x25519":
         # Espera formato RAW (32 bytes)
-        if b"BEGIN" in peer_public_key_pem:
-            # fallback caso venha PEM (menos comum)
-            peer_public = serialization.load_pem_public_key(peer_public_key_pem)
-        else:
-            peer_public = x25519.X25519PublicKey.from_public_bytes(peer_public_key_pem)
+    if b"BEGIN" in peer_public_key_pem:
+        # fallback caso venha PEM (menos comum)
+        peer_public = serialization.load_pem_public_key(peer_public_key_pem)
+    else:
+        peer_public = x25519.X25519PublicKey.from_public_bytes(peer_public_key_pem)
 
         # ECDH (X25519)
         shared_secret = private_key.exchange(peer_public)
-
-    elif curve in ("secp256r1", "secp384r1"):
-        peer_public = serialization.load_pem_public_key(peer_public_key_pem)
-
-        # ECDH clássico
-        shared_secret = private_key.exchange(ec.ECDH(), peer_public)
-
-    else:
-        raise ValueError(f"Unsupported curve: {curve}")
 
     return shared_secret
 
@@ -150,7 +118,7 @@ def derive_key(
     return hkdf.derive(shared_secret)
 
 
-def load_public_key(public_key_pem: bytes, curve: str = "secp256r1"):
+def load_public_key(public_key_pem: bytes, curve: str = "x25519"):
     """
     Load public key from PEM or raw bytes for given curve.
     Args:
@@ -159,20 +127,14 @@ def load_public_key(public_key_pem: bytes, curve: str = "secp256r1"):
     Returns:
         Public key object
     """
-    curve = curve.lower()
-    if curve == "x25519":
         # If detected PEM encoding
-        if public_key_pem.startswith(b"-----BEGIN"):
-            return serialization.load_pem_public_key(public_key_pem)
-        else:
-            return x25519.X25519PublicKey.from_public_bytes(public_key_pem)
-    elif curve in ("secp256r1", "secp384r1"):
+    if public_key_pem.startswith(b"-----BEGIN"):
         return serialization.load_pem_public_key(public_key_pem)
     else:
-        raise ValueError(f"Unsupported curve: {curve}")
+        return x25519.X25519PublicKey.from_public_bytes(public_key_pem)
 
 
-def load_private_key(private_key_pem: bytes, curve: str = "secp256r1"):
+def load_private_key(private_key_pem: bytes, curve: str = "x25519"):
     """
     Load private key from PEM bytes for given curve.
     Args:
@@ -181,7 +143,6 @@ def load_private_key(private_key_pem: bytes, curve: str = "secp256r1"):
     Returns:
         Private key object
     """
-    curve = curve.lower()
     return serialization.load_pem_private_key(private_key_pem, password=None)
 
 

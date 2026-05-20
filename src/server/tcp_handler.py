@@ -160,79 +160,141 @@ class ClientHandler:
         cmd = (request.get("type") or "").lower()
         data = request.get("data", {}) or {}
         sender = request.get("sender") or self.username or "server"
+
         # 1. REGISTO
         if cmd == MessageType.REGISTER.value:
             username = data.get("username") or sender
             password = data.get("password")
             public_key = data.get("public_key")
             certificate = data.get("certificate")
+            salt_b64 = data.get("salt")
 
             if not username or not password:
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Username e password são obrigatórios"}), None, False
 
-            # Verifica se o utilizador já existe na DB
-            if self.server.storage.get_user(username):
+            existing_user = self.server.storage.get_user(username)
+            if existing_user:
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Utilizador já existe"}), None, False
 
-            # Validate public key is Ed25519
             if public_key:
                 logger.info(f"[*] A validar chave pública para {username}")
                 public_key_bytes = self._ensure_bytes(public_key)
                 if not self._is_ed25519_key(public_key_bytes):
                     logger.error(f"[!] Chave pública inválida para {username}")
-                    return self._build_response(
-                        MessageType.RESPONSE, "server",
-                        {"status": "error", "message": "Chave pública deve ser Ed25519"}
-                    ), None, False
-                logger.info(f"[*] Chave pública válida (Ed25519) para {username}")
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Chave pública deve ser Ed25519"}), None, False
 
-            # Validate certificate if provided
             if certificate and public_key:
                 logger.info(f"[*] A validar certificado para {username}")
                 cert_bytes = self._ensure_bytes(certificate)
                 pub_bytes = self._ensure_bytes(public_key)
                 if not self._validate_certificate(cert_bytes, pub_bytes):
                     logger.error(f"[!] Certificado inválido para {username}")
-                    return self._build_response(
-                        MessageType.RESPONSE, "server",
-                        {"status": "error", "message": "Certificado inválido ou não corresponde à chave pública"}
-                    ), None, False
-                logger.info(f"[*] Certificado válido para {username}")
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Certificado inválido ou não corresponde à chave pública"}), None, False
 
-            logger.info(f"[*] A criar utilizador: {username}")
+            salt_bytes = None
+            if salt_b64:
+                try:
+                    salt_bytes = base64.b64decode(salt_b64)
+                except Exception as e:
+                    logger.warning(f"Salt inválido ignorado: {e}")
 
-            created = self.server.storage.create_user(username, password, public_key, certificate)
-            if not created:
+            public_key_bytes = self._ensure_bytes(public_key)
+            cert_bytes = self._ensure_bytes(certificate)
+
+            user_created = self.server.storage.create_user(username, password)
+            if not user_created:
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Falha ao criar utilizador"}), None, False
+
+            device_added = self.server.storage.add_device(username, public_key_bytes, cert_bytes, salt_bytes)
+            if not device_added:
+                self.server.storage.delete_user(username)
+                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Falha ao registar dispositivo"}), None, False
 
             return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Registo efetuado com sucesso"}), None, False
 
-        # 2. LOGIN (AUTH) - CORRIGIDO
+        # 2. LOGIN (AUTH) - Suporta password, desafio-resposta ou pedir salt
         if cmd == MessageType.AUTH.value:
             username = data.get("username")
             password = data.get("password")
             p2p_port = int(data.get("p2p_port", 0) or 0)
+            use_challenge = data.get("use_challenge", False)
+            request_salt = data.get("request_salt", False)
+            public_key = data.get("public_key")
 
-            # Validação de campos vazios
-            if not username or not password:
-                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Credenciais incompletas"}), None, False
+            if not username:
+                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Username é obrigatório"}), None, False
 
-            # Busca o utilizador na base de dados
             user = self.server.storage.get_user(username)
-            
-            # CORREÇÃO CRÍTICA: Se 'user' for None, o utilizador não existe.
             if user is None:
                 return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Utilizador não encontrado"}), None, False
 
-            # Verifica a password
-            if user.get("password_hash") != password:
-                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Password incorreta"}), None, False
+            public_key_bytes = None
+            if public_key:
+                public_key_bytes = self._ensure_bytes(public_key)
 
-            # Se passou as verificações, adiciona aos online
+            existing_device = None
+            if public_key_bytes:
+                existing_device = self.server.storage.get_device(username, public_key_bytes)
+
+            if existing_device:
+                if password and user.get("password_hash") != password:
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Password incorreta"}), None, False
+                if use_challenge:
+                    auth_method = "challenge"
+                else:
+                    auth_method = "password"
+
+                self.device_id = existing_device["id"]
+                await self.server.online_users.add_online_user(username, self.address[0], p2p_port, self.writer)
+
+                nonce = base64.b64encode(os.urandom(16)).decode('utf-8')
+                self.nonce = nonce
+                self.auth_method = auth_method
+
+                salt = existing_device.get("salt")
+                salt_b64 = base64.b64encode(salt).decode('utf-8') if salt else None
+
+                self.server.storage.update_last_login(self.device_id)
+
+                return self._build_response(MessageType.RESPONSE, "server", {
+                    "status": "success",
+                    "message": "Login OK",
+                    "username": username,
+                    "device_id": self.device_id,
+                    "nonce": nonce,
+                    "salt": salt_b64,
+                    "require_challenge": auth_method == "challenge"
+                }), username, False
+
+            if request_salt and not password and not use_challenge:
+                return self._build_response(MessageType.RESPONSE, "server", {
+                    "status": "success",
+                    "message": "Novo dispositivo detetado. Faça registo ou pedido de salt."
+                }), None, False
+
+            if use_challenge:
+                auth_method = "challenge"
+            elif password:
+                if user.get("password_hash") != password:
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Password incorreta"}), None, False
+                auth_method = "password"
+            else:
+                return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Credenciais incompletas"}), None, False
+
             await self.server.online_users.add_online_user(username, self.address[0], p2p_port, self.writer)
             nonce = base64.b64encode(os.urandom(16)).decode('utf-8')
             self.nonce = nonce
-            return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Login OK", "username": username, "nonce": nonce}), username, False
+            self.auth_method = auth_method
+            self.require_new_device = True
+
+            return self._build_response(MessageType.RESPONSE, "server", {
+                "status": "success",
+                "message": "Login OK - Novo dispositivo",
+                "username": username,
+                "require_new_device": True,
+                "nonce": nonce,
+                "require_challenge": auth_method == "challenge"
+            }), username, False
             
 
         # 3. OBTER IP (Para P2P)
@@ -240,23 +302,29 @@ class ClientHandler:
             target_user = data.get("target_user")
             address = await self.server.online_users.get_user_address(target_user)
             
+            devices = self.server.storage.get_devices(target_user)
+            pub_key_b64 = None
+            if devices and len(devices) > 0:
+                pub_key_bytes = devices[0].get("public_key")
+                if pub_key_bytes:
+                    pub_key_b64 = base64.b64encode(pub_key_bytes).decode('utf-8')
+
             if address:
                 ip, port = address
-                return self._build_response(MessageType.IP_RESPONSE, "server", {"target_user": target_user, "ip": ip, "port": port, "status": "success"}), None, False
-
-            # --- ALTERAÇÃO AQUI ---
-            # Se o user está offline, vamos buscar a chave pública dele à DB para o remetente poder cifrar offline
-            user_data = self.server.storage.get_user(target_user)
-            pub_key = None
-            if user_data:
-                pub_key = user_data.get("public_key") # Já deve estar em Base64 ou bytes
+                return self._build_response(MessageType.IP_RESPONSE, "server", {
+                    "target_user": target_user, 
+                    "ip": ip, 
+                    "port": port, 
+                    "status": "success",
+                    "public_key": pub_key_b64
+                }), None, False
 
             return self._build_response(MessageType.IP_RESPONSE, "server", {
                 "target_user": target_user, 
                 "ip": None, 
                 "port": None, 
                 "status": "offline",
-                "public_key": pub_key # <--- Enviar isto!
+                "public_key": pub_key_b64
             }), None, False
 
         # 4. LISTAR UTILIZADORES
@@ -268,56 +336,76 @@ class ClientHandler:
             return self._build_response(MessageType.USERS_LIST, "server", {"users": users}), None, False
 
 
-        # 5. OFFLINE STORE (guardar ou pedir mensagens) e receber nonce
+        # 5. OFFLINE STORE (guardar ou pedir mensagens) e registar novo dispositivo
         if cmd == MessageType.OFFLINE_STORE.value:
             action = data.get("action")
             nonce_encrypted = data.get("nonce_encrypted")
 
-            # 📥 PEDIR MENSAGENS OFFLINE (O cliente acabou de fazer login) e verificar nonce
-            if action == "get":
-                # Get user's public key to verify nonce
-                user_data = self.server.storage.get_user(sender)
-                if not user_data:
-                    return self._build_response(
-                        MessageType.RESPONSE, "server",
-                        {"status": "error", "message": "Utilizador não encontrado"}
-                    ), None, False
-                
-                pub_key_data = user_data.get("public_key")
-                if not pub_key_data:
-                    return self._build_response(
-                        MessageType.RESPONSE, "server",
-                        {"status": "error", "message": "Chave pública não encontrada"}
-                    ), None, False
-                
-                # Verify nonce signature
-                pub_key = load_pem_public_key(self._ensure_bytes(pub_key_data))
-                try:
-                    pub_key.verify(
-                        base64.b64decode(nonce_encrypted),
-                        self.nonce.encode('utf-8')
-                    )
-                except Exception as e:
-                    logger.error(f"Nonce verification failed: {e}")
-                    return self._build_response(
-                        MessageType.RESPONSE, "server",
-                        {"status": "error", "message": "Nonce inválido"}
-                    ), None, False
+            # 📥 REGISTAR NOVO DISPOSITIVO (após login com require_new_device)
+            if action == "register_device":
+                if not hasattr(self, 'require_new_device') or not self.require_new_device:
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Não requer registo de dispositivo"}), None, False
 
-                mensagens_db = self.server.storage.get_offline_messages(sender)
+                public_key = data.get("public_key")
+                certificate = data.get("certificate")
+                salt = data.get("salt")
+
+                if not public_key or not certificate:
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Chave pública e certificado são obrigatórios"}), None, False
+
+                public_key_bytes = self._ensure_bytes(public_key)
+                cert_bytes = self._ensure_bytes(certificate)
+                salt_bytes = None
+                if salt:
+                    try:
+                        salt_bytes = base64.b64decode(salt)
+                    except:
+                        pass
+
+                added = self.server.storage.add_device(self.username, public_key_bytes, cert_bytes, salt_bytes)
+                if not added:
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Falha ao registar dispositivo"}), None, False
+
+                device = self.server.storage.get_device(self.username, public_key_bytes)
+                self.device_id = device["id"]
+                self.require_new_device = False
+
+                self.server.storage.update_last_login(self.device_id)
+
+                return self._build_response(MessageType.RESPONSE, "server", {
+                    "status": "success",
+                    "message": "Dispositivo registado",
+                    "device_id": self.device_id
+                }), None, False
+
+            # 📥 PEDIR MENSAGENS OFFLINE
+            if action == "get":
+                if not hasattr(self, 'username') or not self.username or self.username != sender:
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Não autenticado"}), None, False
+
+                device = self.server.storage.get_device_by_id(self.device_id) if hasattr(self, 'device_id') and self.device_id else None
+
+                if device and hasattr(self, 'auth_method') and self.auth_method == "challenge":
+                    pub_key_data = device.get("public_key")
+                    if pub_key_data:
+                        pub_key = load_pem_public_key(pub_key_data)
+                        try:
+                            pub_key.verify(base64.b64decode(nonce_encrypted), self.nonce.encode('utf-8'))
+                        except Exception as e:
+                            logger.error(f"Nonce verification failed: {e}")
+                            return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Nonce inválido"}), None, False
+
+                mensagens_db = self.server.storage.get_offline_messages_by_device(self.device_id)
                 mensagens_para_enviar = []
 
                 for m in mensagens_db:
-                    # Função auxiliar interna para evitar o Double Base64
                     def ensure_str(data):
-                        if data is None: 
+                        if data is None:
                             return ""
                         if isinstance(data, bytes):
                             try:
-                                # Tenta ver se já é uma string Base64 guardada como bytes
                                 return data.decode('utf-8')
                             except UnicodeDecodeError:
-                                # Se falhar, é porque são bytes binários reais, aí sim fazemos encode
                                 return base64.b64encode(data).decode('utf-8')
                         return str(data)
 
@@ -329,45 +417,37 @@ class ClientHandler:
                     }
                     mensagens_para_enviar.append(payload_msg)
 
-                # Opcional: Limpar as mensagens da DB para não as receberes sempre que fazes login
-                self.server.storage.clear_offline_messages(sender)
+                self.server.storage.clear_offline_messages_by_device(self.device_id)
 
                 return Message(
                     msg_type="offline_messages",
                     sender="server",
                     payload={"messages": mensagens_para_enviar}
-                ), None, False              
+                ), None, False
 
-            # 📤 GUARDAR MENSAGEM OFFLINE (O destinatário estava offline)
+            # 📤 GUARDAR MENSAGEM OFFLINE
             elif action == "store":
                 recipient = data.get("recipient")
-                content = data.get("content") # String Base64 vinda do JSON
+                content = data.get("content")
                 nonce = data.get("nonce")
                 tag = data.get("tag")
 
-                # Validação básica de integridade
                 if not recipient or not content:
-                    return self._build_response(
-                        MessageType.RESPONSE, 
-                        "server", 
-                        {"status": "error", "message": "Dados insuficientes para guardar offline"}
-                    ), None, False
+                    return self._build_response(MessageType.RESPONSE, "server", {"status": "error", "message": "Dados insuficientes"}), None, False
 
-                # Guardamos como bytes na DB (o SQLite trata o BLOB automaticamente)
-                # Fazemos o .encode() apenas se for string, para evitar erros caso já venha em bytes
-                self.server.storage.store_offline_message(
-                    recipient,
-                    sender,
-                    content.encode() if isinstance(content, str) else content,
-                    nonce.encode() if nonce and isinstance(nonce, str) else nonce,
-                    tag.encode() if tag and isinstance(tag, str) else tag
-                )
+                target_devices = self.server.storage.get_devices(recipient)
 
-                return self._build_response(
-                    MessageType.RESPONSE,
-                    "server",
-                    {"status": "success", "message": "Mensagem guardada offline com sucesso"}
-                ), None, False
+                for device in target_devices:
+                    self.server.storage.store_offline_message(
+                        recipient,
+                        sender,
+                        content.encode() if isinstance(content, str) else content,
+                        nonce.encode() if nonce and isinstance(nonce, str) else nonce,
+                        tag.encode() if tag and isinstance(tag, str) else tag,
+                        device_id=device["id"]
+                    )
+
+                return self._build_response(MessageType.RESPONSE, "server", {"status": "success", "message": "Mensagem guardada offline"}), None, False
 
             else:
                 return self._build_response(

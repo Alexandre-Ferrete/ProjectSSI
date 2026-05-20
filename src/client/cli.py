@@ -3,9 +3,14 @@ import threading
 import struct
 import json
 import time
+import os
+import sys
 from typing import Optional, Dict
-from protocol.messages import Message, MessageType
-from client.session_manager import SessionManager
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from ..protocol.messages import Message, MessageType
+from .session_manager import SessionManager
 
 
 def run_cli(self):

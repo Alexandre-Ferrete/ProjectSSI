@@ -10,7 +10,8 @@ from crypto.kdf import derive_key_PBKDF2HMAC
 from typing import Optional, Dict
 from protocol.messages import Message, MessageType
 from client.session_manager import SessionManager
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import _serialization
+from crypto.ecdh import generate_keypair
 
 
 # Nota: importar as funções da Pessoa 3 aqui quando estiverem prontas
@@ -34,6 +35,9 @@ class ChatClient:
         
         # Sessões Ativas: { "username": {"socket": sock, "shared_key": key} }
         self.peer_sessions: Dict[str, dict] = {}
+        
+        # Contador de mensagens por sessão para rotação de chaves
+        self.message_counts: Dict[str, int] = {}
         
         # Pendente: { "username": "mensagem_para_enviar_depois_de_conectar" }
         self.pending_chats = {}
@@ -81,16 +85,22 @@ class ChatClient:
             print(f"Falha ao ligar ao servidor: {e}")
             return False
 
-    def login(self, username, password):
-        # Primeiro, iniciamos o nosso "ouvido" P2P para saber que porta enviar ao servidor
+    def login(self, username, password=None, use_challenge=False, public_key=None):
         if not self.p2p_socket:
             self.start_p2p_listener()
         
         payload = {
             "username": username,
-            "password": password,
-            "p2p_port": self.p2p_port # CRÍTICO: Pessoa 1 precisa disto
+            "p2p_port": self.p2p_port
         }
+        
+        if public_key:
+            payload["public_key"] = public_key
+        elif use_challenge:
+            payload["use_challenge"] = True
+        elif password:
+            payload["password"] = password
+        
         msg = Message(MessageType.AUTH.value, username, payload)
         self._send_packet(self.server_socket, msg)
 
@@ -112,59 +122,84 @@ class ChatClient:
 
     def _handle_peer_connection(self, sock, addr):
         peer_user = None
-        while self.running:
-            msg = self._recv_packet(sock)
-            if not msg: break
-            
-            peer_user = msg.sender
-            
-            if msg.msg_type == MessageType.P2P_HELLO.value:
-                peer_pub_key = msg.payload.get("pub_key")
+        try:
+            while self.running:
+                msg = self._recv_packet(sock)
+                if not msg:
+                    break
                 
-                # --- CORREÇÃO AQUI ---
-                # Garante que o trane (receptor) também gera a sua chave efémera para o bob
-                if peer_user not in self.peer_sessions:
-                    print(f"[*] A processar handshake inicial de {peer_user}...")
-                    # Esta linha gera a chave privada efémera se ela não existir!
-                    my_pub = self.session_manager.get_handshake_data(peer_user)
+                peer_user = msg.sender
+                
+                if msg.msg_type == MessageType.P2P_HELLO.value:
+                    peer_pub_key = msg.payload.get("pub_key")
                     
-                    # Agora sim, processamos a chave do outro
-                    self.session_manager.process_peer_handshake(peer_user, peer_pub_key)
-                    
-                    # Respondemos com a nossa chave pública
-                    reply = Message(MessageType.P2P_HELLO.value, self.username, {"pub_key": my_pub})
-                    self._send_packet(sock, reply)
-                    
-                    # Guardamos o socket
-                    self.peer_sessions[peer_user] = {"socket": sock}
-                else:
-                    # Se já conhecemos, apenas processamos o handshake
-                    self.session_manager.process_peer_handshake(peer_user, peer_pub_key)
-                # ----------------------
+                    # Garante que o receptor também gera a sua chave efémera
+                    if peer_user not in self.peer_sessions:
+                        print(f"[*] A processar handshake inicial de {peer_user}...")
+                        my_pub = self.session_manager.get_handshake_data(peer_user)
+                        
+                        self.session_manager.process_peer_handshake(peer_user, peer_pub_key)
+                        
+                        reply = Message(MessageType.P2P_HELLO.value, self.username, {"pub_key": my_pub})
+                        self._send_packet(sock, reply)
+                        
+                        self.peer_sessions[peer_user] = {"socket": sock}
+                    else:
+                        # Já tínhamos sessão - é resposta ao nosso P2P_HELLO
+                        self.session_manager.process_peer_handshake(peer_user, peer_pub_key)
+                        if peer_user not in self.peer_sessions:
+                            self.peer_sessions[peer_user] = {"socket": sock}
 
-                # Enviar mensagens pendentes (se existirem)
-                if peer_user in self.pending_chats:
-                    content = self.pending_chats.pop(peer_user)
-                    encrypted_payload = self.session_manager.encrypt_for_peer(peer_user, content)
-                    if encrypted_payload:
-                        p2p_msg = Message(MessageType.P2P_MSG.value, self.username, encrypted_payload)
-                        self._send_packet(sock, p2p_msg)
+                    # Enviar mensagens pendentes (se existirem) - SEMPRE verificar
+                    if peer_user in self.pending_chats:
+                        content = self.pending_chats.pop(peer_user)
+                        encrypted_payload = self.session_manager.encrypt_for_peer(peer_user, content)
+                        if encrypted_payload:
+                            p2p_msg = Message(MessageType.P2P_MSG.value, self.username, encrypted_payload)
+                            self._send_packet(sock, p2p_msg)
 
-            elif msg.msg_type == MessageType.P2P_MSG.value:
-                # Se chegar aqui e der erro, é porque o process_peer_handshake falhou antes
-                texto_limpo = self.session_manager.decrypt_from_peer(peer_user, msg.payload)
-                if texto_limpo:
-                    print(f"\n[{peer_user}]: {texto_limpo}")
-                else:
-                    print(f"\n[!] Erro de desencriptação com {peer_user}. Sessão corrompida.")
+                elif msg.msg_type == MessageType.P2P_MSG.value:
+                    texto_limpo = self.session_manager.decrypt_from_peer(peer_user, msg.payload)
+                    if texto_limpo:
+                        print(f"\n[{peer_user}]: {texto_limpo}")
+                    else:
+                        print(f"\n[!] Erro de desencriptação com {peer_user}. Sessão corrompida.")
+        except ConnectionResetError:
+            print(f"[!] Conexão com {peer_user or 'peer'} foi resetada.")
+        except BrokenPipeError:
+            print(f"[!] Conexão com {peer_user or 'peer'} foi interrompida.")
+        except Exception as e:
+            print(f"[!] Erro na conexão com {peer_user or 'peer'}: {e}")
+        finally:
+            # Remover sessão quando conexão fecha
+            if peer_user and peer_user in self.peer_sessions:
+                print(f"[*] Removendo sessão com {peer_user}")
+                del self.peer_sessions[peer_user]
+                # Também limpar a chave de sessão
+                if peer_user in self.session_manager.active_sessions:
+                    del self.session_manager.active_sessions[peer_user]
+            try:
+                sock.close()
+            except:
+                pass
 
     def connect_to_peer(self, username, ip, port):
         """Inicia uma conexão direta com outro user."""
         try:
+            # Remover sessão anterior se existir (pode ter ficado inválida)
+            if username in self.peer_sessions:
+                try:
+                    self.peer_sessions[username]["socket"].close()
+                except:
+                    pass
+                del self.peer_sessions[username]
+                if username in self.session_manager.active_sessions:
+                    del self.session_manager.active_sessions[username]
+            
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((ip, int(port)))
             
-            # CORREÇÃO: Usar o SessionManager para gerar a chave efémera real
+            # Usar o SessionManager para gerar a chave efémera X25519
             my_pub_b64 = self.session_manager.get_handshake_data(username)
             handshake = Message(MessageType.P2P_HELLO.value, self.username, {"pub_key": my_pub_b64})
             self._send_packet(sock, handshake)
@@ -176,6 +211,9 @@ class ChatClient:
             
         except Exception as e:
             print(f"Erro ao ligar a {username}: {e}")
+            # Limpar sessão falhada
+            if username in self.peer_sessions:
+                del self.peer_sessions[username]
 
     # --- Loops de Receção e CLI ---
 
@@ -188,29 +226,51 @@ class ChatClient:
                 status = msg.payload.get("status")
                 texto = msg.payload.get("message")
                 
-                
                 if status == "success":
                     print(f"\n[*] SUCESSO: {texto}")
                     
+                    require_new_device = msg.payload.get("require_new_device")
+                    if require_new_device:
+                        print("[*] Novo dispositivo detetado. A registar...")
+                        pub_key = self.session_manager.get_public_key_pem()
+                        cert = self.session_manager.get_certificate()
+                        salt = self.session_manager.get_salt()
+                        
+                        msg_reg = Message(MessageType.OFFLINE_STORE.value, self.username, {
+                            "action": "register_device",
+                            "public_key": pub_key,
+                            "certificate": cert,
+                            "salt": base64.b64encode(salt).decode('utf-8') if salt else None
+                        })
+                        self._send_packet(self.server_socket, msg_reg)
+                        continue
+
+                    device_id = msg.payload.get("device_id")
+
                     if "Login OK" in texto:
+                        self.device_id = device_id
                         print(f"[*] Listening para P2P na porta {self.p2p_port}")
-                        salt = msg.payload.get("salt")
-                        self.session_manager.set_salt(salt)
                         self.username = msg.payload.get("username")
                         self.session_manager.set_username(self.username)
+                        salt = msg.payload.get("salt")
+                        if salt:
+                            self.session_manager.set_salt(base64.b64decode(salt))
                         nonce = msg.payload.get("nonce")
 
-                        # Load private key temporarily, sign, then discard
-                        nonce_enc = self.session_manager.sign_with_identity_key(
-                            nonce.encode('utf-8')
-                        )
+                        require_challenge = msg.payload.get("require_challenge")
+
+                        priv_path = os.path.join(self.session_manager.data_dir, f"{self.username}_priv.pem")
+                        if os.path.exists(priv_path) and os.path.getsize(priv_path) > 0 and require_challenge:
+                            nonce_enc = self.session_manager.sign_with_identity_key(nonce.encode('utf-8'))
+                            req = Message(MessageType.OFFLINE_STORE.value, self.username, {
+                                "action": "get",
+                                "nonce_encrypted": base64.b64encode(nonce_enc).decode('utf-8')
+                            })
+                        else:
+                            req = Message(MessageType.OFFLINE_STORE.value, self.username, {
+                                "action": "get"
+                            })
                         
-                        # 👇 NOVO: pedir mensagens offline ao fazer login
-                        req = Message(MessageType.OFFLINE_STORE.value, self.username,{
-                            "action": "get",
-                            "nonce_encrypted" : base64.b64encode(nonce_enc).decode('utf-8')
-                            }
-                        )
                         self._send_packet(self.server_socket, req)
                         
                         
@@ -234,12 +294,13 @@ class ChatClient:
                         pub_key = msg.payload.get("public_key")
                         encrypted_data = self.session_manager.encrypt_offline(pub_key, content)
 
+                        
                         msg_off = Message(MessageType.OFFLINE_STORE.value, self.username, {
                             "action": "store",
                             "recipient": dest_user,
                             "content": encrypted_data["content"],
-                            "nonce": encrypted_data["nonce"],
-                            "tag": encrypted_data["tag"]
+                            "nonce": encrypted_data.get("nonce"),
+                            "tag": encrypted_data.get("tag")
                         })
                         self._send_packet(self.server_socket, msg_off)
 
@@ -321,25 +382,22 @@ class ChatClient:
                     else:
                         user, pwd = parts[1], parts[2]
                         
-                        salt_path = os.path.join(self.session_manager.data_dir, f"{user}.salt")
-                        if not os.path.exists(self.session_manager.data_dir):
-                            print(f"[!]ERRO: Salt não encontrado para {user}. Registaste-te nesta máquina?")
-                            continue
-                            #FALTA PEDIR O SALT AO SERVER
-                    
-                        with open(salt_path, "rb") as f:
-                            ident_salt = f.read()
-
-                        pwd_kdf, _ = derive_key_PBKDF2HMAC(pwd,salt=ident_salt)
+                        priv_path = os.path.join(self.session_manager.data_dir, f"{user}_priv.pem")
+                        pub_path = os.path.join(self.session_manager.data_dir, f"{user}_pub.pem")
+                        has_keys = os.path.exists(priv_path) and os.path.exists(pub_path)
                         
-                        success = self.session_manager.load_or_generate_identity_keys(user=user, password_kdf=pwd_kdf)
-
-                        if success:
-                            self.session_manager.set_password(pwd)  # Guardar temporariamente
-                            self.login(user, base64.b64encode(pwd_kdf).decode('utf-8'))
-                            print(f"[*] Bem-vindo {user}! A autenticar com o servidor...")
+                        self.session_manager.set_password(pwd)
+                        
+                        if has_keys:
+                            pub_key_pem = None
+                            with open(pub_path, "rb") as f:
+                                pub_key_pem = f.read().decode('utf-8')
+                            pub_key_b64 = base64.b64encode(pub_key_pem.encode()).decode('utf-8')
+                            print("[*] A verificar dispositivo...")
+                            self.login(user, public_key=pub_key_b64)
                         else:
-                            print("[!] Falha no login: Password incorreta ou chaves corrompidas.")
+                            print("[*] Novo dispositivo - login normal...")
+                            self.login(user, password=pwd)
 
 
                 # --- CHAT P2P ---
@@ -351,12 +409,29 @@ class ChatClient:
                     target, text = parts[1], parts[2]
                     
                     if target in self.peer_sessions:
+                        current_count = self.message_counts.get(target, 0) + 1
+                        self.message_counts[target] = current_count
+                        
+                        if current_count % 10 == 0:
+                            print(f"[*] A fazer rotação de chaves com {target}...")
+                            self.session_manager.ratchet_session(target)
+                            print(f"[*] Chave atualizada para {target}")
+                        
                         payload = self.session_manager.encrypt_for_peer(target, text)
                         if payload:
-                            msg = Message(MessageType.P2P_MSG.value, self.username, payload)
-                            self._send_packet(self.peer_sessions[target]["socket"], msg)
+                            try:
+                                self._send_packet(self.peer_sessions[target]["socket"], 
+                                    Message(MessageType.P2P_MSG.value, self.username, payload))
+                            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                                print(f"[!] Erro ao enviar para {target}: {e}. A tentar reconectar...")
+                                del self.peer_sessions[target]
+                                if target in self.session_manager.active_sessions:
+                                    del self.session_manager.active_sessions[target]
+                                self.message_counts[target] = 0
+                                self.pending_chats[target] = text
+                                req = Message(MessageType.GET_IP.value, self.username, {"target_user": target})
+                                self._send_packet(self.server_socket, req)
                     else:
-                        # 👇 guardar sempre para possível envio offline
                         self.pending_chats[target] = text 
                         
                         print(f"[*] A procurar {target}...")

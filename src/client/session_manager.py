@@ -6,6 +6,9 @@ from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta, timezone
 from crypto import generate_keypair_Ed25519
 from crypto.kdf import derive_key_PBKDF2HMAC
+from crypto import generate_keypair as generate_x25519_keypair
+from crypto import perform_exchange, derive_key as derive_key_from_ecdh
+from crypto.symmetric import generate_key as generate_symmetric_key, encrypt, decrypt
 from cryptography.hazmat.primitives import serialization
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -30,8 +33,13 @@ class SessionManager:
         # Password temporária para derivar chave (NUNCA guarda a chave derivada!)
         self._temp_password: Optional[str] = None
         
+        # Salt em bytes para fallback na memória
+        self._salt: Optional[bytes] = None
+        
         # Estado P2P
         self.pending_ephemeral_priv_keys: Dict[str, bytes] = {}
+        self.pending_ephemeral_pub_keys: Dict[str, str] = {}
+        self.peer_public_keys: Dict[str, bytes] = {}
         self.active_sessions: Dict[str, bytes] = {}
         
         if username:
@@ -51,8 +59,25 @@ class SessionManager:
         self._ensure_dir()
         print(f"[*] SessionManager configurado para: {username}")
 
-    def set_salt(self, salt: str):
+    def set_salt(self, salt):
+        """Guarda o salt (do servidor ou local) e persiste no disco."""
         self.salt = salt
+        if isinstance(salt, bytes):
+            self._salt = salt
+        else:
+            try:
+                self._salt = base64.b64decode(salt)
+            except:
+                self._salt = None
+        
+        if self.username and self._salt:
+            try:
+                salt_path = os.path.join(self.data_dir, f"{self.username}.salt")
+                with open(salt_path, "wb") as f:
+                    f.write(self._salt)
+                print(f"[*] Salt guardado em disco: {salt_path}")
+            except Exception as e:
+                print(f"[!] Erro ao guardar salt: {e}")
 
     def _ensure_dir(self):
         """Garante que a pasta para guardar as chaves existe."""
@@ -77,35 +102,34 @@ class SessionManager:
             if not password_kdf:
                 raise ValueError("password_kdf não pode ser vazio")
             
-            
-            priv_path = os.path.join(self.data_dir, f"{self.username}_priv.pem")
-            pub_path = os.path.join(self.data_dir, f"{self.username}_pub.pem")
-            cert_path = os.path.join(self.data_dir, f"{self.username}_cert.pem")
+            priv_path = os.path.join(self.data_dir, f"{user}_priv.pem")
+            pub_path = os.path.join(self.data_dir, f"{user}_pub.pem")
+            cert_path = os.path.join(self.data_dir, f"{user}_cert.pem")
 
-
+            # Check if keys exist and validate password
             if os.path.exists(priv_path) and os.path.exists(pub_path):
-                print("[*] A carregar chave pública do disco...")
-                with open(pub_path, "rb") as f:
-                    self.identity_pub_key = serialization.load_pem_public_key(
-                        f.read()
-                    )
-                
-                # Load existing certificate if exists
-                if os.path.exists(cert_path):
-                    print("[*] A carregar certificado existente...")
-                    with open(cert_path, "rb") as f:
-                        self.identity_cert = f.read()
-                else:
-                    print("[!] Certificado não encontrado. A gerar novo...")
-                    self.identity_cert = self._generate_self_signed_cert(user, self.identity_pub_key.public_bytes(
-                        encoding=serialization.Encoding.PEM,
-                        format=serialization.PublicFormat.SubjectPublicKeyInfo
-                    ), password_kdf)
-            else:
+                try:
+                    with open(priv_path, "rb") as f:
+                        priv_key = serialization.load_pem_private_key(
+                            f.read(),
+                            password=password_kdf
+                        )
+                    with open(pub_path, "rb") as f:
+                        self.identity_pub_key = serialization.load_pem_public_key(f.read())
+                    print("[*] Chaves carregadas do disco")
+                except ValueError as e:
+                    if "Bad decrypt" in str(e):
+                        print("[!] Password incorreta. A gerar novas chaves...")
+                        for f in [priv_path, pub_path, cert_path]:
+                            if os.path.exists(f):
+                                os.remove(f)
+                    else:
+                        raise
+            
+            # Generate new keys if needed
+            if not os.path.exists(priv_path):
                 print("[*] A gerar novo par de chaves Ed25519...")
                 priv_key, pub_key = generate_keypair_Ed25519()
-
-                # NÃO guardamos a chave privada em memória!
                 self.identity_pub_key = pub_key
 
                 priv_pem = priv_key.private_bytes(
@@ -119,25 +143,35 @@ class SessionManager:
                     format=serialization.PublicFormat.SubjectPublicKeyInfo
                 )
 
-                print("[*] A guardar chaves no disco...")
                 with open(priv_path, "wb") as f:
                     f.write(priv_pem)
-
                 with open(pub_path, "wb") as f:
                     f.write(pub_pem)
+                print(f"[*] Chaves guardadas em {self.data_dir}")
 
-                # Generate self-signed certificate
-                print("[*] A gerar certificado X.509...")
-                self.identity_cert = self._generate_self_signed_cert(user, pub_pem, password_kdf)
-
+            # Ensure pub_pem is always defined
             pub_pem = self.identity_pub_key.public_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
 
-            # Generate self-signed X.509 certificate
-            self.identity_cert = self._generate_self_signed_cert(user, pub_pem, password_kdf)
+            # Certificate
+            if os.path.exists(cert_path):
+                print("[*] A carregar certificado existente...")
+                with open(cert_path, "rb") as f:
+                    self.identity_cert = f.read()
+            else:
+                print("[*] A gerar certificado X.509...")
+                self.identity_cert = self._generate_self_signed_cert(user, pub_pem, password_kdf)
+                with open(cert_path, "wb") as f:
+                    f.write(self.identity_cert)
+                print(f"[*] Certificado guardado em {cert_path}")
 
+            # Always generate pub_pem for return
+            pub_pem = self.identity_pub_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
             return base64.b64encode(pub_pem).decode("utf-8")
 
     def _generate_self_signed_cert(self, username: str, public_key_pem: bytes, password_kdf: bytes = None) -> bytes:
@@ -199,16 +233,39 @@ class SessionManager:
         print(f"[*] Certificate carregada, tamanho: {len(self.identity_cert)} bytes")
         return base64.b64encode(self.identity_cert).decode("utf-8")
 
+    def get_public_key_pem(self) -> str:
+        """Return the public key in PEM format."""
+        if not self.identity_pub_key:
+            raise ValueError("Public key not loaded.")
+        pub_pem = self.identity_pub_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        return pub_pem.decode("utf-8")
+
+    def get_salt(self) -> bytes:
+        """Return the salt in bytes."""
+        local_salt_path = os.path.join(self.data_dir, f"{self.username}.salt")
+        if os.path.exists(local_salt_path):
+            with open(local_salt_path, "rb") as f:
+                return f.read()
+        return self._salt
+
     def sign_with_identity_key(self, data: bytes) -> bytes:
         """Load private key temporarily, sign data, then discard key."""
         priv_path = os.path.join(self.data_dir, f"{self.username}_priv.pem")
         
         print("[*] A carregar chave privada temporariamente...")
         
-        # Use local salt from disk
+        # Use local salt from disk, or fallback to memory salt
         local_salt_path = os.path.join(self.data_dir, f"{self.username}.salt")
-        with open(local_salt_path, "rb") as f:
-            local_salt = f.read()
+        if os.path.exists(local_salt_path):
+            with open(local_salt_path, "rb") as f:
+                local_salt = f.read()
+        elif self._salt:
+            local_salt = self._salt
+        else:
+            raise ValueError(f"Salt não encontrado para {self.username}")
         
         # Derive password to get the key
         password_kdf = derive_key_PBKDF2HMAC(self._temp_password, local_salt)[0]
@@ -225,43 +282,102 @@ class SessionManager:
         return signature
 
     # ==========================================
-    # 2. HANDSHAKE P2P (Diffie-Hellman)
+    # 2. HANDSHAKE P2P (X25519 ECDH)
     # ==========================================
+    
     def get_handshake_data(self, peer_username: str) -> str:
-        """Generate ephemeral key for P2P handshake."""
-        # Placeholder - would call DH key generation
-        eph_priv, eph_pub = b"eph_priv", b"minha_chave_publica_efemera"
-        self.pending_ephemeral_priv_keys[peer_username] = eph_priv
-        return base64.b64encode(eph_pub).decode('utf-8')
+        """
+        Gera chave efémera X25519 para handshake P2P.
+        Retorna a chave pública efémera em base64.
+        """
+        eph_priv_pem, eph_pub_raw = generate_x25519_keypair()
+        
+        # Guardamos a chave privada efémera temporariamente
+        self.pending_ephemeral_priv_keys[peer_username] = eph_priv_pem
+        
+        print(f"[DEBUG HANDSHAKE] Generated X25519 keypair for {peer_username}")
+        print(f"[DEBUG HANDSHAKE] Ephemeral pub key (base64): {base64.b64encode(eph_pub_raw).decode('utf-8')[:50]}...")
+        
+        return base64.b64encode(eph_pub_raw).decode('utf-8')
 
     def process_peer_handshake(self, peer_username: str, peer_pub_key_b64: str):
-        """Process peer's ephemeral key and compute shared secret."""
-        peer_pub_key = base64.b64decode(peer_pub_key_b64)
-        my_eph_priv = self.pending_ephemeral_priv_keys.pop(peer_username, None)
-        
-        if not my_eph_priv:
-            print(f"[Erro] Handshake com {peer_username} falhou.")
-            return
+        """
+        Processa a chave pública efémera do peer e deriva a chave de sessão.
+        """
+        try:
+            # Decodificar chave pública do peer
+            peer_pub_raw = base64.b64decode(peer_pub_key_b64)
+            
+            # Obter nossa chave privada efémera
+            my_eph_priv_pem = self.pending_ephemeral_priv_keys.pop(peer_username, None)
+            
+            if not my_eph_priv_pem:
+                print(f"[Erro] Chave efémera não encontrada para {peer_username}")
+                return
+            
+            print(f"[DEBUG HANDSHAKE] Peer {peer_username} pub key (base64): {peer_pub_key_b64[:50]}...")
+            
+            # Perform ECDH - derivar segredo partilhado
+            shared_secret = perform_exchange(my_eph_priv_pem, peer_pub_raw)
+            print(f"[DEBUG HANDSHAKE] Shared secret (hex): {shared_secret.hex()[:50]}...")
+            
+            # Derivar chave simétrica com HKDF-SHA256
+            session_key = derive_key_from_ecdh(shared_secret, length=32, info=b"P2PChat")
+            print(f"[DEBUG HANDSHAKE] Session key (hex): {session_key.hex()[:32]}...")
+            
+            # Guardar chave de sessão e chave pública do peer
+            self.active_sessions[peer_username] = session_key
+            self.peer_public_keys[peer_username] = peer_pub_raw
+            
+            print(f"[*] Sessão criptográfica X25519 estabelecida com {peer_username}")
+            
+        except Exception as e:
+            print(f"[Erro] Handshake X25519 falhou: {e}")
 
-        # Placeholder - would compute DH shared secret
-        shared_secret = b"CHAVE_SIMETRICA_SUPER_SECRETA"
-        self.active_sessions[peer_username] = shared_secret
-        print(f"[*] Sessão criptográfica estabelecida com {peer_username}!")
+    def ratchet_session(self, peer_username: str):
+        """ Faz rotação de chaves: gera novo par efémero e deriva nova chave de sessão."""
+        if peer_username not in self.active_sessions:
+            print(f"[Erro] Não há sessão com {peer_username}")
+            return
+        
+        old_key = self.active_sessions[peer_username]
+        
+        new_eph_pub, new_eph_priv = generate_x25519_keypair()
+        
+        new_pub_b64 = base64.b64encode(new_eph_pub).decode('utf-8')
+        
+        self.pending_ephemeral_pub_keys[peer_username] = new_pub_b64
+        self.pending_ephemeral_priv_keys[peer_username] = new_eph_priv
+        
+        new_shared = perform_exchange(new_eph_priv, self.peer_public_keys[peer_username])
+        new_session_key = derive_key_from_ecdh(new_shared, length=32, info=b"P2PChatRatchet")
+        
+        self.active_sessions[peer_username] = new_session_key
+        
+        print(f"[*] Ratchet: nova chave de sessão derivada para {peer_username}")
 
     # ==========================================
-    # 3. ENCRIPTAÇÃO DE MENSAGENS (AES)
+    # 3. ENCRIPTAÇÃO DE MENSAGENS (AES-GCM)
     # ==========================================
 
     def encrypt_for_peer(self, peer_username: str, plaintext: str) -> Optional[Dict[str, str]]:
-        """Encrypt message using shared session key."""
+        """Encripta mensagem usando AES-GCM com chave de sessão."""
         if peer_username not in self.active_sessions:
             print(f"[Erro] Não há sessão segura com {peer_username}")
             return None
             
-        shared_key = self.active_sessions[peer_username]
-        # Placeholder - would use AES-GCM
-        ciphertext = f"ENC({plaintext})".encode('utf-8')
-        nonce, tag = b"nonce", b"tag"
+        session_key = self.active_sessions[peer_username]
+        plaintext_bytes = plaintext.encode('utf-8')
+        
+        # AES-GCM: returns (ciphertext, nonce, tag)
+        ciphertext, nonce, tag = encrypt(session_key, plaintext_bytes)
+        
+        print(f"[DEBUG ENCRYPT] Peer: {peer_username}")
+        print(f"[DEBUG ENCRYPT] Plaintext: {plaintext}")
+        print(f"[DEBUG ENCRYPT] Key (hex): {session_key.hex()[:32]}...")
+        print(f"[DEBUG ENCRYPT] Ciphertext (base64): {base64.b64encode(ciphertext).decode('utf-8')[:50]}...")
+        print(f"[DEBUG ENCRYPT] Nonce (hex): {nonce.hex()}")
+        print(f"[DEBUG ENCRYPT] Tag (hex): {tag.hex()}")
         
         return {
             "content": base64.b64encode(ciphertext).decode('utf-8'),
@@ -270,28 +386,67 @@ class SessionManager:
         }
 
     def decrypt_from_peer(self, peer_username: str, payload: dict) -> Optional[str]:
-        """Decrypt message using shared session key."""
+        """Desencripta mensagem usando AES-GCM com chave de sessão."""
         if peer_username not in self.active_sessions:
+            print(f"[Erro] Não há sessão com {peer_username}")
             return None
             
-        shared_key = self.active_sessions[peer_username]
-        
-        ciphertext = base64.b64decode(payload["content"])
-        # Placeholder - would use AES-GCM
-        return ciphertext.decode('utf-8').replace("ENC(", "").replace(")", "")
+        try:
+            session_key = self.active_sessions[peer_username]
+            
+            ciphertext = base64.b64decode(payload["content"])
+            nonce = base64.b64decode(payload["nonce"])
+            tag = base64.b64decode(payload["tag"])
+            
+            print(f"[DEBUG DECRYPT] Peer: {peer_username}")
+            print(f"[DEBUG DECRYPT] Key (hex): {session_key.hex()[:32]}...")
+            print(f"[DEBUG DECRYPT] Ciphertext (base64): {base64.b64encode(ciphertext).decode('utf-8')[:50]}...")
+            print(f"[DEBUG DECRYPT] Nonce (hex): {nonce.hex()}")
+            print(f"[DEBUG DECRYPT] Tag (hex): {tag.hex()}")
+            
+            plaintext = decrypt(session_key, ciphertext, nonce, tag)
+            print(f"[DEBUG DECRYPT] Decrypted: {plaintext.decode('utf-8')}")
+            return plaintext.decode('utf-8')
+            
+        except Exception as e:
+            print(f"[Erro] Desencriptação falhou: {e}")
+            return None
     
     def encrypt_offline(self, recipient_pub_key_b64: str, text: str) -> Dict[str, str]:
-        """Encrypt message for offline recipient using their public key."""
-        ciphertext = f"OFFLINE_ENC({text})".encode('utf-8')
-        return {
-            "content": help.encode_base64(ciphertext),
-            "nonce": help.encode_base64(b"static_nonce"),
-            "tag": help.encode_base64(b"static_tag")
+        """
+        Encripta mensagem para destinatário offline usando a sua chave pública Ed25519.
+        Nota: Ed25519 é para assinaturas, não encriptação. Para encriptar,
+        seria necessário usar RSA ou ECDH (mas o peer não tem chave ECDH pública).
+        Esta implementação é um placeholder - o servidorstore a mensagem
+        e o destinatário usa a sua chave de identidade para desencriptar.
+        """
+        from crypto.hybrid import encrypt_content
+        
+        try:
+            # A chave pública do recipient está em formato PEM base64
+            # hybrid.py deve tratar da encriptação
+            encrypted = encrypt_content(text, recipient_pub_key_b64)
+            return encrypted
+        except Exception as e:
+            print(f"[Erro] Encriptação offline falhou: {e}")
+            # Fallback placeholder
+            ciphertext = f"OFFLINE_ENC({text})".encode('utf-8')
+            return {
+                "content": help.encode_base64(ciphertext),
+                "nonce": help.encode_base64(b"static_nonce"),
+                "tag": help.encode_base64(b"static_tag")
             }
 
     def decrypt_offline(self, encrypted_payload: dict) -> str:
-        """Decrypt offline message using our private key."""
-        content_b64 = encrypted_payload.get("content")
-        raw_bytes = help.decode_base64(content_b64) 
-        raw_str = raw_bytes.decode('utf-8')
-        return raw_str.replace("OFFLINE_ENC(", "").replace(")", "")
+        """Desencripta mensagem offline usando chave de identidade."""
+        from crypto.hybrid import decrypt_content
+        
+        try:
+            return decrypt_content(encrypted_payload)
+        except Exception as e:
+            print(f"[Erro] Desencriptação offline falhou: {e}")
+            # Fallback placeholder
+            content_b64 = encrypted_payload.get("content")
+            raw_bytes = help.decode_base64(content_b64) 
+            raw_str = raw_bytes.decode('utf-8')
+            return raw_str.replace("OFFLINE_ENC(", "").replace(")", "")
