@@ -2,12 +2,6 @@
 Helpers
 =======
 Utility functions for the project.
-
-TODO:
-- Logging setup
-- Encoding/decoding helpers
-- Validation helpers
-- Password hashing
 """
 
 import os
@@ -125,7 +119,7 @@ def decode_hex(data: str) -> bytes:
 
 def hash_password(password: str, salt: Optional[bytes] = None) -> tuple:
     """
-    TODO: Hash password with salt.
+    Hash password with salt.
     
     Args:
         password: Plain text password
@@ -150,7 +144,7 @@ def hash_password(password: str, salt: Optional[bytes] = None) -> tuple:
 
 def verify_password(password: str, hash: str, salt: str) -> bool:
     """
-    TODO: Verify password against hash.
+    Verify password against hash.
     
     Args:
         password: Plain text password

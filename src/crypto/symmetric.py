@@ -2,11 +2,6 @@
 Symmetric Encryption (AES-GCM)
 =============================
 AES-GCM for encrypting message data.
-
-TODO:
-- Generate symmetric key
-- Encrypt data (with authentication)
-- Decrypt and verify
 """
 
 from typing import Tuple

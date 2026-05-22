@@ -14,7 +14,6 @@ from cryptography.hazmat.primitives import _serialization
 from crypto.ecdh import generate_keypair
 
 
-# Nota: importar as funções da Pessoa 3 aqui quando estiverem prontas
 # from crypto.hybrid import encrypt_content, decrypt_content
 
 class ChatClient:
@@ -363,7 +362,6 @@ class ChatClient:
                     salt_path = os.path.join(self.session_manager.data_dir, f"{user}.salt")
                     with open (salt_path, "wb") as f:
                         f.write(salt)
-                    # Cria a mensagem com o formato que a Pessoa 1 pediu no servidor
                     msg = Message (MessageType.REGISTER.value, user, {
                         "username": user,
                         "password": base64.b64encode(pwd_kdf).decode('utf-8'),

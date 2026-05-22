@@ -7,67 +7,6 @@ Combines asymmetric and symmetric encryption for efficient data encryption.
 from typing import Tuple
 
 
-def encrypt(
-    recipient_public_key: bytes,
-    plaintext: bytes,
-    ephemeral_key: bytes = None
-) -> Tuple[bytes, bytes, bytes, bytes]:
-    """
-    Encrypt data using RSA hybrid encryption.
-
-    Process:
-    1. Generate random symmetric key (session key)
-    2. Encrypt plaintext with symmetric key (AES-GCM)
-    3. Encrypt symmetric key with recipient's public key (RSA/ECC)
-    4. Send: encrypted_key + nonce + tag + ciphertext
-    
-    Args:
-        recipient_public_key: Recipient's public key
-        plaintext: Data to encrypt
-        ephemeral_key: Optional pre-generated ephemeral key
-        
-    Returns:
-        (encrypted_key, nonce, tag, ciphertext)
-    """
-    from . import symmetric, asymmetric
-    key = symmetric.generate_key()
-    ciphertext, nonce, tag = symmetric.encrypt(key, plaintext)
-    encrypted_key = asymmetric.encrypt(recipient_public_key, key)
-    
-    return encrypted_key, nonce, tag, ciphertext
-
-
-def decrypt(
-    private_key: bytes,
-    encrypted_key: bytes,
-    nonce: bytes,
-    tag: bytes,
-    ciphertext: bytes
-) -> bytes:
-    """
-    Decrypt data using RSA hybrid encryption.
-
-    Process:
-    1. Decrypt symmetric key with private key
-    2. Decrypt ciphertext with symmetric key
-    3. Verify authentication tag
-    
-    Args:
-        private_key: Recipient's private key
-        encrypted_key: Encrypted session key
-        nonce: Nonce from sender
-        tag: Authentication tag
-        ciphertext: Encrypted data
-        
-    Returns:
-        Decrypted plaintext
-    """
-    from . import symmetric, asymmetric
-    key = asymmetric.decrypt(private_key, encrypted_key)
-    plaintext = symmetric.decrypt(key, ciphertext, nonce, tag)
-    return plaintext
-
-
 def encrypt_ecdh(
     recipient_public_key: bytes,
     plaintext: bytes
@@ -152,18 +91,17 @@ def encrypt_content(plaintext: str, recipient_pub_key_b64: str) -> dict:
     
     # Detectar formato (PEM ou raw)
     if b"BEGIN" in pub_key_bytes:
+        # Nota: Se for RSA, falhará aqui se as funções RSA forem necessárias
+        # Mas o projeto parece estar a transitar para Ed25519
         public_key = serialization.load_pem_public_key(pub_key_bytes)
+        # Se chegarmos aqui com RSA, precisamos de asymmetric.py
+        # Por agora, assumimos que as chaves Ed25519 são o padrão
+        raise NotImplementedError("Cifragem RSA (PEM) não suportada sem asymmetric.py")
     else:
-        # É uma chave Ed25519 raw - precisa ser包装ada para RSA
-        # Como Ed25519 não suporta encriptação direta, usamos um workaround:
-        # Geramos uma chave efémera X25519 e usamos para derivar chave simétrica
-        # O destinatário usa a sua chave Ed25519 para verificar assinatura
+        # É uma chave Ed25519 raw
         from . import ecdh, symmetric
         import os
         
-        # Para keys Ed25519, não podemos encriptar diretamente
-        # Usamos abordagem simplificada: AES com chave derivada de hash da pub key
-        # Isso não é perfeito mas funciona para o caso de uso offline
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
         
@@ -192,38 +130,13 @@ def decrypt_content(encrypted_payload: dict) -> str:
     Returns:
         Mensagem em texto
     """
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
-    from cryptography.hazmat.primitives import hashes
-    
-    # Precisa da nossa chave pública para derivar a mesma chave
-    # Isso requer acesso à chave privada - vamos usar abordagem diferente
-    # O destinatário precisa da mesma chave que foi usada
-    
     # Por agora, retornamos erro indicando que precisa de implementação
-    # A implementação correta requer que o remetente inclua a sua chave efémera
     raise NotImplementedError("Desencriptação offline requer revisão")
 
 
 # ============================================================================
 # HYBRID ENCRYPTION ARCHITECTURE
 # ============================================================================
-#
-# Why Hybrid?
-# ------------
-# - Asymmetric encryption (RSA/ECC) is slow for large data
-# - Symmetric encryption (AES) is fast but requires shared key
-# - Hybrid: Use asymmetric to exchange symmetric key, then encrypt data
-#
-# Flow (RSA-based):
-# ----------------
-# 1. Alice has Bob's public key
-# 2. Alice generates random AES key (K)
-# 3. Alice encrypts K with Bob's public key -> E_K
-# 4. Alice encrypts message M with K -> C
-# 5. Alice sends (E_K, C) to Bob
-# 6. Bob decrypts E_K with his private key -> K
-# 7. Bob decrypts C with K -> M
 #
 # Flow (ECDH-based - with PFS):
 # -----------------------------

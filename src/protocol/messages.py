@@ -64,7 +64,7 @@ def create_register_msg(username, pwd_hash, pub_key) -> Message:
         sender=username,
         payload={
             "password": pwd_hash,
-            "public_key": pub_key  # Para a PKI da Pessoa 1
+            "public_key": pub_key
         }
     )
 

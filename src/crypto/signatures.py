@@ -2,11 +2,6 @@
 Digital Signatures
 =================
 Message signing and verification for authenticity.
-
-TODO:
-- Sign messages
-- Verify signatures
-- Sign certificates
 """
 import base64
 from typing import Tuple

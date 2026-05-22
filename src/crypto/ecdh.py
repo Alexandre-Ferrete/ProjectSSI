@@ -2,11 +2,6 @@
 ECDH Key Exchange
 ================
 Elliptic Curve Diffie-Hellman for Perfect Forward Secrecy (PFS).
-
-TODO:
-- Generate ECDH keypair (ephemeral)
-- Perform key exchange
-- Derive shared secret
 """
 import cryptography
 from typing import Tuple
@@ -21,7 +16,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 def generate_keypair() -> Tuple[bytes, bytes]:
     """
-    TODO: Generate ECDH keypair.
+    Generate ECDH keypair.
     
     Args:
         curve: Elliptic curve name (secp256r1, secp384r1, X25519)
@@ -56,7 +51,7 @@ def perform_exchange(
     peer_public_key_pem: bytes,
 ) -> bytes:
     """
-    TODO: Perform ECDH key exchange.
+    Perform ECDH key exchange.
     
     Args:
         private_key_pem: Our private key
