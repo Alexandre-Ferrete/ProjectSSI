@@ -26,11 +26,11 @@ class SessionManager:
         self.username = username
         self.data_dir = data_dir
         
-        # Apenas a chave pública é guardada em memória (não sensível)
+        # Apenas a chave pública é guardada em memória
         self.identity_pub_key: Optional[object] = None
         self.identity_cert: Optional[bytes] = None
         
-        # Password temporária para derivar chave (NUNCA guarda a chave derivada!)
+        # Password temporária para derivar chave (Nao guarda a chave derivada!)
         self._temp_password: Optional[str] = None
         
         # Salt em bytes para fallback na memória
@@ -84,9 +84,7 @@ class SessionManager:
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
 
-    # ==========================================
-    # 1. CHAVES DE IDENTIDADE (Para o Servidor)
-    # ==========================================
+    # CHAVES DE IDENTIDADE (Para o Servidor)
 
     def load_or_generate_identity_keys(self, password_kdf: bytes, user: str) -> str:
             """
@@ -281,9 +279,7 @@ class SessionManager:
         print("[*] Chave privada descartada da memória")
         return signature
 
-    # ==========================================
-    # 2. HANDSHAKE P2P (X25519 ECDH)
-    # ==========================================
+    # HANDSHAKE P2P (X25519 ECDH)
     
     def get_handshake_data(self, peer_username: str) -> str:
         """
@@ -308,7 +304,7 @@ class SessionManager:
             # Decodificar chave pública do peer
             peer_pub_raw = base64.b64decode(peer_pub_key_b64)
             
-            # Obter nossa chave privada efémera
+            # Obter a nossa chave privada efémera
             my_eph_priv_pem = self.pending_ephemeral_priv_keys.pop(peer_username, None)
             
             if not my_eph_priv_pem:
@@ -356,9 +352,7 @@ class SessionManager:
         
         print(f"[*] Ratchet: nova chave de sessão derivada para {peer_username}")
 
-    # ==========================================
-    # 3. ENCRIPTAÇÃO DE MENSAGENS (AES-GCM)
-    # ==========================================
+    # ENCRIPTAÇÃO DE MENSAGENS (AES-GCM)
 
     def encrypt_for_peer(self, peer_username: str, plaintext: str) -> Optional[Dict[str, str]]:
         """Encripta mensagem usando AES-GCM com chave de sessão."""
@@ -369,7 +363,7 @@ class SessionManager:
         session_key = self.active_sessions[peer_username]
         plaintext_bytes = plaintext.encode('utf-8')
         
-        # AES-GCM: returns (ciphertext, nonce, tag)
+        # AES-GCM: return (ciphertext, nonce, tag)
         ciphertext, nonce, tag = encrypt(session_key, plaintext_bytes)
         
         print(f"[DEBUG ENCRYPT] Peer: {peer_username}")
@@ -429,7 +423,6 @@ class SessionManager:
             return encrypted
         except Exception as e:
             print(f"[Erro] Encriptação offline falhou: {e}")
-            # Fallback placeholder
             ciphertext = f"OFFLINE_ENC({text})".encode('utf-8')
             return {
                 "content": help.encode_base64(ciphertext),
@@ -445,7 +438,6 @@ class SessionManager:
             return decrypt_content(encrypted_payload)
         except Exception as e:
             print(f"[Erro] Desencriptação offline falhou: {e}")
-            # Fallback placeholder
             content_b64 = encrypted_payload.get("content")
             raw_bytes = help.decode_base64(content_b64) 
             raw_str = raw_bytes.decode('utf-8')

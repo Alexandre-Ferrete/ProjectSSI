@@ -14,8 +14,6 @@ from cryptography.hazmat.primitives import _serialization
 from crypto.ecdh import generate_keypair
 
 
-# from crypto.hybrid import encrypt_content, decrypt_content
-
 class ChatClient:
     def __init__(self, server_host: str = 'localhost', server_port: int = 5555, username: str = None):
         self.server_addr = (server_host, server_port)
@@ -41,7 +39,7 @@ class ChatClient:
         # Pendente: { "username": "mensagem_para_enviar_depois_de_conectar" }
         self.pending_chats = {}
 
-    # --- Utilitários de Comunicação (O "Framer") ---
+    # Utils Comunicação
     
     def _send_packet(self, sock: socket.socket, message: Message):
         """Envia qualquer mensagem no formato [Tamanho][JSON]."""
@@ -69,7 +67,7 @@ class ChatClient:
         except:
             return None
 
-    # --- Gestão de Conexão com Servidor ---
+    # Gestão de Conexão com Servidor
 
     def connect(self) -> bool:
         try:
@@ -103,7 +101,7 @@ class ChatClient:
         msg = Message(MessageType.AUTH.value, username, payload)
         self._send_packet(self.server_socket, msg)
 
-    # --- Lógica P2P (Onde a magia acontece) ---
+    # Lógica P2P 
 
     def start_p2p_listener(self):
         """Abre uma porta para receber outros utilizadores."""
@@ -144,7 +142,6 @@ class ChatClient:
                         
                         self.peer_sessions[peer_user] = {"socket": sock}
                     else:
-                        # Já tínhamos sessão - é resposta ao nosso P2P_HELLO
                         self.session_manager.process_peer_handshake(peer_user, peer_pub_key)
                         if peer_user not in self.peer_sessions:
                             self.peer_sessions[peer_user] = {"socket": sock}
@@ -214,7 +211,7 @@ class ChatClient:
             if username in self.peer_sessions:
                 del self.peer_sessions[username]
 
-    # --- Loops de Receção e CLI ---
+    # Loops de Receção e CLI
 
     def _server_receive_loop(self):
         while self.running:
@@ -287,7 +284,7 @@ class ChatClient:
                 else:
                     print(f"[!] {dest_user} está offline. A guardar mensagem no servidor...")
 
-                    # 👇 NOVO: enviar mensagem offline para o servidor
+                    # enviar mensagem offline para o servidor
                     if dest_user in self.pending_chats:
                         content = self.pending_chats.pop(dest_user)
                         pub_key = msg.payload.get("public_key")
@@ -306,7 +303,7 @@ class ChatClient:
             elif msg.msg_type == MessageType.USERS_LIST.value:
                 print(f"[*] Utilizadores Online: {msg.payload.get('users')}")
 
-            # 👇 NOVO: receber mensagens offline do servidor
+            # receber mensagens offline do servidor
             elif msg.msg_type == "offline_messages":
                 mensagens = msg.payload.get("messages", [])
                 
@@ -315,8 +312,6 @@ class ChatClient:
                 
                 for m in mensagens:
                     sender = m.get("sender")
-                    # Passamos o dicionário 'm' inteiro porque o decrypt_offline 
-                    # precisa do content, nonce e tag
                     try:
                         texto_limpo = self.session_manager.decrypt_offline(m)
                         print(f"\n[OFFLINE][{sender}]: {texto_limpo}")
@@ -346,7 +341,7 @@ class ChatClient:
                 parts = raw_input.split(" ", 2)
                 cmd = parts[0].lower()
 
-                # --- REGISTAR ---
+                # REGISTAR
                 if cmd == "/register" and len(parts) == 3:
                     user, pwd = parts[1], parts[2]
                     print(f"[*] A registar utilizador: {user}")
@@ -373,7 +368,7 @@ class ChatClient:
                     self._send_packet(self.server_socket, msg)
                     print("[*] Pedido de registo enviado ao servidor!")
 
-                # --- LOGIN ---
+                # LOGIN
                 elif cmd == "/login" and len(parts) == 3:
                     if self.username:
                         print("[!] Já tens sessão iniciada!")
@@ -398,7 +393,7 @@ class ChatClient:
                             self.login(user, password=pwd)
 
 
-                # --- CHAT P2P ---
+                # CHAT P2P
                 elif cmd == "/chat" and len(parts) > 2:
                     if not self.username:
                         print("[!] Precisas de fazer /login primeiro.")
@@ -436,7 +431,7 @@ class ChatClient:
                         req = Message(MessageType.GET_IP.value, self.username, {"target_user": target})
                         self._send_packet(self.server_socket, req)
 
-                # --- LISTAR ONLINE ---
+                # LISTAR ONLINE
                 elif cmd == "/list":
                     if not self.username:
                         print("[!] Precisas de fazer /login primeiro.")
@@ -444,9 +439,8 @@ class ChatClient:
                         req = Message(MessageType.GET_USERS.value, self.username, {})
                         self._send_packet(self.server_socket, req)
                 
-                # --- SAIR ---
+                # SAIR
                 elif cmd == "/exit":
-                    # Avisa o servidor que vais sair
                     if self.username:
                         msg = Message(MessageType.DISCONNECT.value, self.username, {})
                         self._send_packet(self.server_socket, msg)

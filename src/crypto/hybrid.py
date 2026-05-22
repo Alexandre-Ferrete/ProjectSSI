@@ -68,9 +68,7 @@ def decrypt_ecdh(
     return plaintext
 
 
-# ============================================================================
-# HIGH-LEVEL API (Base64 strings for session_manager)
-# ============================================================================
+# HIGH-LEVEL API 
 
 import base64
 
